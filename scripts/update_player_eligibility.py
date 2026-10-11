@@ -45,30 +45,21 @@ async def run():
     
     print("1. Updating seed players seasons and eligibility...")
     for slug, (fs, ls, el) in SEED_SEASONS.items():
-        await db.exec(lambda c, sl=slug, fs=fs, ls=ls, el=el: c.table("ipl_players").update({
+        is_26 = (ls == 2026)
+        await db.exec(lambda c, sl=slug, fs=fs, ls=ls, el=is_26: c.table("ipl_players").update({
             "first_ipl_season": fs,
             "last_ipl_season": ls,
             "is_eligible": el,
         }).eq("slug", sl))
     print(f"Updated {len(SEED_SEASONS)} seed players.")
 
-    print("2. Bulk updating last_ipl_season < 2020 to is_eligible = False...")
-    res = await db.exec(lambda c: c.table("ipl_players").update({"is_eligible": False}).lt("last_ipl_season", 2020))
+    print("2. Bulk updating last_ipl_season < 2026 to is_eligible = False...")
+    res = await db.exec(lambda c: c.table("ipl_players").update({"is_eligible": False}).lt("last_ipl_season", 2026))
     print(f"Bulk updated older players: {len(res) if res else 'OK'}")
-
-    print("3. Ensuring AB de Villiers and Chris Gayle remain eligible...")
-    for slug in ("ab-de-villiers", "chris-gayle"):
-        await db.exec(lambda c, sl=slug: c.table("ipl_players").update({
-            "is_eligible": True,
-            "last_ipl_season": 2021,
-        }).eq("slug", sl))
 
     eligible = await db.exec(lambda c: c.table("ipl_players").select("id, display_name, last_ipl_season").eq("is_eligible", True))
     ineligible = await db.exec(lambda c: c.table("ipl_players").select("id").eq("is_eligible", False))
     print(f"SUCCESS: Eligible={len(eligible)}, Ineligible={len(ineligible)}")
-    ab = [p for p in eligible if "villiers" in p["display_name"].lower()]
-    cg = [p for p in eligible if "gayle" in p["display_name"].lower()]
-    print(f"AB de Villiers eligible: {bool(ab)}, Chris Gayle eligible: {bool(cg)}")
 
 if __name__ == "__main__":
     asyncio.run(run())

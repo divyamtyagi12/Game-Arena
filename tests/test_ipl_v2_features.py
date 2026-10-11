@@ -29,22 +29,24 @@ def test_system_franchises_reduced_to_exact_four():
 
 
 def test_player_eligibility_logic():
-    """Requirement 2: Squads 2020-2026, AB de Villiers & Gayle eligible, older ineligible."""
+    """Requirement: Only 2026 IPL squad players are eligible; players before 2026 are ineligible."""
     players = [
-        {"name": "AB de Villiers", "last_ipl_season": 2021, "is_eligible": True},
-        {"name": "Chris Gayle", "last_ipl_season": 2021, "is_eligible": True},
         {"name": "Virat Kohli", "last_ipl_season": 2026, "is_eligible": True},
+        {"name": "Rohit Sharma", "last_ipl_season": 2026, "is_eligible": True},
+        {"name": "MS Dhoni", "last_ipl_season": 2026, "is_eligible": True},
+        {"name": "AB de Villiers", "last_ipl_season": 2021, "is_eligible": False},
+        {"name": "Chris Gayle", "last_ipl_season": 2021, "is_eligible": False},
         {"name": "Sachin Tendulkar", "last_ipl_season": 2013, "is_eligible": False},
         {"name": "Virender Sehwag", "last_ipl_season": 2015, "is_eligible": False},
         {"name": "Gautam Gambhir", "last_ipl_season": 2018, "is_eligible": False},
     ]
-    # Check that older players are marked ineligible (< 2020)
+    # Check that older players (< 2026) are marked ineligible
     for p in players:
-        if p["last_ipl_season"] < 2020:
+        if p["last_ipl_season"] < 2026:
             assert p["is_eligible"] is False
         else:
             assert p["is_eligible"] is True
-            assert p["last_ipl_season"] >= 2020
+            assert p["last_ipl_season"] == 2026
 
 
 def test_batting_order_state_machine():
