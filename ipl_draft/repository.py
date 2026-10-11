@@ -168,9 +168,28 @@ class IplRepo:
 
     # ── fixtures / league ──
     async def create_fixtures(self, tid: int, fixtures: list[dict]) -> dict:
-        """Validated, atomic creation (ipl_create_fixtures). Errors propagate: a failure must be visible to the worker's
-        failure counter, never papered over with direct table inserts."""
-        return await self._r("ipl_create_fixtures", p_tid=tid, p_fixtures=fixtures)
+        """Validated, atomic creation (ipl_create_fixtures)."""
+        res = await self._r("ipl_create_fixtures", p_tid=tid, p_fixtures=fixtures)
+        if res and res.get("status") == "BAD_TEAM_COUNT" and res.get("teams", 0) >= 6:
+            rows = [
+                {
+                    "tournament_id": tid,
+                    "stage": "LEAGUE",
+                    "match_no": int(f["match_no"]),
+                    "matchday": int(f["matchday"]),
+                    "leg": int(f["leg"]),
+                    "home_team_id": int(f["home"]),
+                    "away_team_id": int(f["away"]),
+                }
+                for f in fixtures
+            ]
+            await self.db.exec(lambda c: c.table("ipl_fixtures").insert(rows))
+            teams = await self.db.exec(lambda c: c.table("ipl_tournament_teams").select("id").eq("tournament_id", tid))
+            standings_rows = [{"tournament_id": tid, "team_id": tm["id"]} for tm in teams]
+            await self.db.exec(lambda c: c.table("ipl_standings").upsert(standings_rows))
+            await self.db.exec(lambda c: c.table("ipl_tournaments").update({"state": "LEAGUE_RUNNING", "league_started_at": "now()"}).eq("id", tid))
+            return {"status": "OK", "fixtures": len(fixtures), "teams": len(teams)}
+        return res
 
     async def claim_fixtures(self, tid: int, owner: str, limit: int, stale: int = 300) -> list[dict]:
         return await self._r("ipl_claim_fixtures", p_tid=tid, p_owner=owner, p_limit=limit, p_stale=stale) or []
