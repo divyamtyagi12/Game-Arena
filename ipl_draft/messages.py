@@ -401,20 +401,126 @@ def full_scorecard_pages(c: Mapping) -> list[str]:
     return pages
 
 
+def format_compact_scorecard(card: Mapping, stage: str = "LEAGUE", user_id: int | None = None) -> str:
+    """Format a compact match scorecard for private DM.
+    
+    Shows ONLY:
+    - Win/loss message (if user_id provided)
+    - Match stage and teams
+    - Top 3 batters and top 3 bowlers per innings
+    - Team scores and overs
+    - Match result
+    
+    No inline buttons.
+    """
+    DIVIDER = "━━━━━━━━━━━━━━━━"
+    t1 = card.get("team1") or card.get("home_team") or {}
+    t2 = card.get("team2") or card.get("away_team") or {}
+    t1_name = resolve_team_name(t1, "Team 1")
+    t2_name = resolve_team_name(t2, "Team 2")
+
+    raw_stage = str(stage).removeprefix("PLAYOFF_").upper()
+    STAGE_TITLES = {
+        "LEAGUE": "🏆 League Match",
+        "QUALIFIER_1": "🏆 Qualifier 1",
+        "ELIMINATOR": "🔥 Eliminator",
+        "QUALIFIER_2": "⚔️ Qualifier 2",
+        "FINAL": "👑 Grand Final",
+    }
+    head_stage = STAGE_TITLES.get(raw_stage, f"🏆 {raw_stage.replace('_', ' ').title()}")
+    match_header = f"{head_stage}\n{esc(t1_name)} vs {esc(t2_name)}"
+
+    winner_id = card.get("winner_team_id")
+    win_header = ""
+    if user_id is not None:
+        if winner_id == user_id:
+            win_header = "🎉 <b>YOU WON!</b>\n\n"
+        elif winner_id is not None:
+            win_header = "😔 <b>You lost.</b>\n\n"
+        else:
+            win_header = "🤝 <b>Match tied</b>\n\n"
+
+    main_innings = [i for i in (card.get("innings_detail") or []) if not i.get("is_super_over")]
+
+    inn_blocks = []
+    if main_innings:
+        for idx, inn in enumerate(main_innings, 1):
+            bt = inn.get("batting_team") or {}
+            default_bat = t1_name if idx == 1 else t2_name
+            bat_name = resolve_team_name(bt, default_bat)
+            total = f"{inn['runs']}/{inn['wickets']} ({overs_str(inn['legal_balls'])} ov)"
+
+            batters = [b for b in inn.get("batting", []) if b.get("did_bat")]
+            batters = sorted(batters, key=lambda b: (int(b.get("runs", 0)), -int(b.get("balls", 0))), reverse=True)[:3]
+            bat_lines = []
+            for b in batters:
+                mark = "*" if not b.get("out") else ""
+                nm = b.get("name", "Batter")
+                r = b.get("runs", 0)
+                bl = b.get("balls", 0)
+                f4 = b.get("fours", 0)
+                s6 = b.get("sixes", 0)
+                bat_lines.append(f"{esc(nm)} {r}{mark} ({bl}b, {f4}x4, {s6}x6)")
+
+            bowlers = [w for w in inn.get("bowling", []) if w.get("legal_balls", 0) > 0]
+            bowlers = sorted(bowlers, key=lambda w: (int(w.get("wickets", 0)), -int(w.get("runs", 0))), reverse=True)[:3]
+            bowl_lines = []
+            for w in bowlers:
+                nm = w.get("name", "Bowler")
+                wkts = w.get("wickets", 0)
+                runs = w.get("runs", 0)
+                ov = overs_str(w.get("legal_balls", 0))
+                bowl_lines.append(f"{esc(nm)} {wkts}/{runs} ({ov})")
+
+            bat_sec = "\n".join(bat_lines) if bat_lines else "<i>No batting records</i>"
+            bowl_sec = "\n".join(bowl_lines) if bowl_lines else "<i>No bowling records</i>"
+            block = (
+                f"{esc(bat_name)} — {total}\n\n"
+                f"🏏 <b>Top Batters:</b>\n{bat_sec}\n\n"
+                f"🎯 <b>Top Bowlers:</b>\n{bowl_sec}"
+            )
+            inn_blocks.append(block)
+    else:
+        inn_list = [i for i in (card.get("innings") or []) if not i.get("is_super_over")]
+        for idx, inn in enumerate(inn_list, 1):
+            default_bat = t1_name if idx == 1 else t2_name
+            total = f"{inn['runs']}/{inn['wickets']} ({overs_str(inn['legal_balls'])} ov)"
+            inn_blocks.append(f"{esc(default_bat)} — {total}")
+
+    win_team = t1 if winner_id == t1.get("id") else t2 if winner_id == t2.get("id") else None
+    res_type = card.get("result_type")
+    margin = card.get("margin", 0)
+    if win_team:
+        wname = resolve_team_name(win_team, "Winner")
+        if res_type == "RUNS":
+            m_unit = "run" if margin == 1 else "runs"
+            res_line = f"✅ {esc(wname)} won by {margin} {m_unit}"
+        elif res_type == "WICKETS":
+            m_unit = "wicket" if margin == 1 else "wickets"
+            res_line = f"✅ {esc(wname)} won by {margin} {m_unit}"
+        elif card.get("summary"):
+            res_line = f"✅ {esc(card['summary'])}"
+        else:
+            res_line = f"✅ {esc(wname)} won the match"
+    elif card.get("summary"):
+        res_line = f"✅ {esc(card['summary'])}"
+    else:
+        res_line = "🤝 Match tied"
+
+    sections = [f"{win_header}{match_header}"]
+    for b in inn_blocks:
+        sections.append(DIVIDER)
+        sections.append(b)
+    sections.append(DIVIDER)
+    sections.append(res_line)
+
+    return "\n\n".join(sections)
+
+
 def format_full_scorecard(match_data: Mapping, stage: str = "LEAGUE", user_id: int | None = None) -> list[str]:
     """Single centralized function to format match scorecards for all stages (LEAGUE, QUALIFIER_1,
     ELIMINATOR, QUALIFIER_2, FINAL). Reused for every match, sent to DM with zero inline buttons."""
-    c = dict(match_data)
-    if stage:
-        c["stage"] = stage
-    pages = full_scorecard_pages(c)
-    if user_id is not None and pages:
-        winner_id = c.get("winner_team_id")
-        if winner_id == user_id:
-            pages[-1] += "\n\n🎉 <b>YOU WON!</b>"
-        elif winner_id is not None:
-            pages[-1] += "\n\n😔 <b>You lost.</b>"
-    return pages
+    return [format_compact_scorecard(match_data, stage, user_id)]
 
 
 
@@ -452,34 +558,88 @@ def bracket_text(bracket: Sequence[Mapping], standings: Sequence[Mapping]) -> st
     return "\n".join(out)
 
 
-def league_complete_text(rows: Sequence[Mapping]) -> str:
-    out = [
-        "🏆 <b>IPL DRAFT — LEAGUE STAGE COMPLETED!</b>",
-        "",
-        "━━━━━━━━━━━━━━━━━━━━━━━━",
-        "",
-        "<pre>POS  TEAM          P   W   L   PTS    NRR",
-    ]
-    for i, r in enumerate(rows, 1):
-        tag = f"Q{i}" if i <= 4 else f"E{i}"
-        name = _tname(r, 12)
+def format_group_tournament_summary(
+    standings: Sequence[Mapping],
+    playoff_results: Sequence[Mapping] | None = None,
+    champ: Mapping | None = None,
+    mvps: Mapping | None = None,
+) -> str:
+    """Format single consolidated group tournament summary message.
+
+    Contains:
+    - Points Table (with ⭐ for human managers, mobile fixed-width)
+    - Playoff bracket rules
+    - Playoff match results as completed (Qualifier 1, Eliminator, Qualifier 2, Final)
+    - Champion announcement
+    - Tournament MVPs (among human teams only)
+    """
+    table_rows = ["#  Team                P  W  L  Pts"]
+    for i, r in enumerate(standings, 1):
+        raw_name = r.get("name") or r.get("short_name") or f"Team {i}"
+        tname = raw_name[:19]
         p = r.get("played", 0)
         w = r.get("won", 0)
         l = r.get("lost", 0)
         pts = r.get("points", 0)
-        nrr = float(r.get("nrr", 0.0))
-        out.append(f"{tag:<4} {name:<12} {p:>3} {w:>3} {l:>3} {pts:>5} {nrr:>+7.2f}")
-    out.append("</pre>")
-    out.append("")
-    out.append("━━━━━━━━━━━━━━━━━━━━━━━━")
-    out.append("")
-    out.append("✅ Q = Qualified for Playoffs")
-    out.append("❌ E = Eliminated")
-    out.append("")
-    out.append("🔥 <b>TOP 4 QUALIFIED!</b>")
-    out.append("")
-    out.append("🏆 <b>IPL PLAYOFFS BEGIN!</b>")
-    return "\n".join(out)
+        star = "⭐" if r.get("kind") == "HUMAN" else ""
+        table_rows.append(f"{i:>2} {tname:<19} {p:>2} {w:>2} {l:>2} {pts:>3}{star}")
+
+    table_block = (
+        "📊 <b>Points Table</b>\n\n"
+        "<pre>\n"
+        + "\n".join(table_rows)
+        + "\n</pre>\n"
+        "⭐ = Human Player"
+    )
+
+    playoff_rules_block = (
+        "🏆 <b>Playoffs! Top 4 advance:</b>\n\n"
+        "• Qualifier 1: 1 v 2 (winner → Final)\n"
+        "• Eliminator: 3 v 4 (loser out)\n"
+        "• Qualifier 2: Q1 loser v Elim winner\n"
+        "• Final"
+    )
+
+    blocks = [table_block, playoff_rules_block]
+
+    if playoff_results:
+        STAGE_HEADS = {
+            "QUALIFIER_1": "🏏 <b>Qualifier 1:</b>",
+            "ELIMINATOR": "🏏 <b>Eliminator:</b>",
+            "QUALIFIER_2": "🏏 <b>Qualifier 2:</b>",
+            "FINAL": "🏏 🏆 <b>FINAL:</b>",
+        }
+        playoff_lines = []
+        for pr in playoff_results:
+            stg = str(pr.get("stage", "")).removeprefix("PLAYOFF_").upper()
+            head = STAGE_HEADS.get(stg, f"🏏 <b>{stg.replace('_', ' ').title()}:</b>")
+            wname = esc(pr.get("winner_name", "Winner"))
+            s1 = pr.get("inn1_score", "")
+            s2 = pr.get("inn2_score", "")
+            match_txt = f"{head}\n{wname} won ({s1} vs {s2})"
+            if stg == "FINAL" and champ:
+                cname = esc(champ.get("name", "Champion"))
+                match_txt += f"\n\n👑 <b>{cname} are CHAMPIONS! 🏆🎉</b>"
+            playoff_lines.append(match_txt)
+
+        blocks.append("\n\n".join(playoff_lines))
+
+    if mvps and (mvps.get("most_runs") or mvps.get("most_wickets")):
+        mvp_lines = ["🏅 <b>Tournament MVPs (among players' teams)</b>"]
+        if mvps.get("most_runs"):
+            mr = mvps["most_runs"]
+            mvp_lines.append(f"\n🏏 <b>Most Runs:</b>\n{esc(mr['player'])} — {mr['runs']} runs (in {esc(mr['team'])})")
+        if mvps.get("most_wickets"):
+            mw = mvps["most_wickets"]
+            w_word = "wickets" if mw["wickets"] != 1 else "wicket"
+            mvp_lines.append(f"\n🎯 <b>Most Wickets:</b>\n{esc(mw['player'])} — {mw['wickets']} {w_word} (in {esc(mw['team'])})")
+        blocks.append("\n".join(mvp_lines))
+
+    return "\n\n".join(blocks)
+
+
+def league_complete_text(rows: Sequence[Mapping]) -> str:
+    return format_group_tournament_summary(rows)
 
 
 def playoff_intro(stage: str, home: Mapping, away: Mapping) -> str:

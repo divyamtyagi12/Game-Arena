@@ -190,7 +190,7 @@ async def _simulate(rt: IplRuntime, t: dict, fx: dict, squads: dict[int, Squad])
     if res.get("status") not in ("OK", "ALREADY"):
         raise RuntimeError(f"settle {fx['id']}: {res}")
 
-    # Deliver final scorecard pages automatically to each human user's DM — no buttons needed
+    # Deliver final compact scorecard automatically to each human user's DM — no buttons needed
     if humans and res.get("match_id"):
         try:
             card = await rt.repo.scorecard(res["match_id"])
@@ -199,15 +199,14 @@ async def _simulate(rt: IplRuntime, t: dict, fx: dict, squads: dict[int, Squad])
                     uid = h["user_id"]
                     your_team_id = h["id"]
                     mid = dm_msgs.get(uid)
-                    pages = m.format_full_scorecard(card, fx.get("stage", "LEAGUE"), your_team_id)
-                    for page_no, page_text in enumerate(pages):
-                        if page_no == 0 and mid:
-                            if not await notify.edit_dm(rt, uid, mid, page_text):
-                                await notify.dm(rt, uid, page_text)
-                        else:
-                            await notify.dm(rt, uid, page_text)
+                    text = m.format_compact_scorecard(card, fx.get("stage", "LEAGUE"), your_team_id)
+                    if mid:
+                        if not await notify.edit_dm(rt, uid, mid, text):
+                            await notify.dm(rt, uid, text)
+                    else:
+                        await notify.dm(rt, uid, text)
         except Exception:  # noqa: BLE001
-            log.exception("Failed to deliver full scorecard DM for match %s", res.get("match_id"))
+            log.exception("Failed to deliver compact scorecard DM for match %s", res.get("match_id"))
 
     return res
 
@@ -229,16 +228,94 @@ async def _league(rt: IplRuntime, t: dict) -> bool:
         return True
     for fx in claimed:
         await _simulate(rt, t, fx, squads)
-    # Fix 1: Do NOT post intermediate matchday summaries or points tables to group
+    # Fix 1 & 2: Do NOT post intermediate matchday summaries or points tables to group
     await rt.pause(rt.s.matchday_delay)
     return True
 
 
+async def compute_human_mvps(rt: IplRuntime, tid: int) -> dict:
+    stats = await rt.repo.player_stats(tid)
+    teams = {x["id"]: x for x in await rt.repo.all_teams(tid)}
+    human_team_ids = {tm["id"] for tm in teams.values() if tm.get("kind") == "HUMAN"}
+    human_stats = [s for s in stats if s.get("team_id") in human_team_ids]
+
+    mvps: dict[str, dict] = {}
+    if human_stats:
+        best_run = max(human_stats, key=lambda s: (int(s.get("runs") or 0), -int(s.get("balls") or 0)))
+        if int(best_run.get("runs") or 0) > 0:
+            tm = teams.get(best_run.get("team_id"), {})
+            mvps["most_runs"] = {
+                "player": best_run.get("name", "Player"),
+                "runs": int(best_run.get("runs") or 0),
+                "team": tm.get("name", "Human Team"),
+            }
+        best_wkt = max(human_stats, key=lambda s: (int(s.get("wickets") or 0), -int(s.get("bowl_runs") or 0)))
+        if int(best_wkt.get("wickets") or 0) > 0:
+            tm = teams.get(best_wkt.get("team_id"), {})
+            mvps["most_wickets"] = {
+                "player": best_wkt.get("name", "Player"),
+                "wickets": int(best_wkt.get("wickets") or 0),
+                "team": tm.get("name", "Human Team"),
+            }
+    return mvps
+
+
+async def update_group_tournament_summary(rt: IplRuntime, t: dict) -> None:
+    tid = t["id"]
+    fresh_t = await rt.repo.get(tid) or t
+    standings = await rt.repo.standings(tid)
+    bracket = await rt.repo.bracket(tid)
+    teams = {x["id"]: x for x in await rt.repo.all_teams(tid)}
+
+    STAGE_ORDER = ["QUALIFIER_1", "ELIMINATOR", "QUALIFIER_2", "FINAL"]
+    sorted_bracket = sorted(
+        [b for b in bracket if b.get("status") == "COMPLETED" and b.get("match_id")],
+        key=lambda b: STAGE_ORDER.index(b["stage"]) if b["stage"] in STAGE_ORDER else 99
+    )
+
+    playoff_results = []
+    for b in sorted_bracket:
+        card = await rt.repo.match_card(b["match_id"])
+        if not card:
+            continue
+        w_id = card.get("winner_team_id")
+        t1 = card.get("team1") or {}
+        t2 = card.get("team2") or {}
+        winner_name = t1.get("name") if w_id == t1.get("id") else t2.get("name") or "Winner"
+        inn = card.get("innings") or []
+        inn1_score = f"{inn[0]['runs']}/{inn[0]['wickets']}" if len(inn) > 0 else "0/0"
+        inn2_score = f"{inn[1]['runs']}/{inn[1]['wickets']}" if len(inn) > 1 else "0/0"
+        playoff_results.append({
+            "stage": b["stage"],
+            "winner_name": winner_name,
+            "inn1_score": inn1_score,
+            "inn2_score": inn2_score,
+        })
+
+    champ = None
+    mvps = None
+    if fresh_t.get("champion_team_id"):
+        champ = teams.get(fresh_t["champion_team_id"])
+        mvps = await compute_human_mvps(rt, tid)
+    elif any(p["stage"] == "FINAL" for p in playoff_results):
+        final_b = next((b for b in sorted_bracket if b["stage"] == "FINAL"), None)
+        if final_b and final_b.get("winner_team_id"):
+            champ = teams.get(final_b["winner_team_id"])
+            mvps = await compute_human_mvps(rt, tid)
+
+    summary_text = m.format_group_tournament_summary(
+        standings=standings,
+        playoff_results=playoff_results,
+        champ=champ,
+        mvps=mvps,
+    )
+    await notify.set_group_summary(rt, fresh_t, summary_text)
+
+
 async def _league_completed(rt: IplRuntime, t: dict) -> bool:
     tid = t["id"]
+    await update_group_tournament_summary(rt, t)
     standings = await rt.repo.standings(tid)
-    # Fix 2 & 3: Exactly ONE final points table sent directly to group with ZERO inline buttons
-    await notify.group(rt, t["group_id"], m.league_complete_text(standings), markup=None)
     rank = {r["team_id"]: r["rank"] for r in standings}
     for tm in await rt.repo.all_teams(tid):
         if tm["kind"] == "HUMAN":
@@ -263,15 +340,10 @@ async def _playoff(rt: IplRuntime, t: dict) -> bool:
         log.error("Invalid playoff fixture teams: home=%s away=%s", fx.get("home"), fx.get("away"))
         return False
 
-    # Fix 5: Do NOT send separate 'Simulating...' or temporary intro announcements to group
     res = await _simulate(rt, t, fx, squads)
     if res.get("status") == "OK":
-        # Fix 4: Send the COMPLETE playoff scorecard to the group chat (no buttons)
-        card = await rt.repo.scorecard(res["match_id"])
-        if card:
-            group_pages = m.format_full_scorecard(card, fx["stage"], user_id=None)
-            for page in group_pages:
-                await notify.group(rt, t["group_id"], page, markup=None)
+        # Edit the single group summary message (points table + playoff results)
+        await update_group_tournament_summary(rt, t)
     await rt.pause(rt.s.playoff_delay)
     return True
 
@@ -292,14 +364,10 @@ async def finalize(rt: IplRuntime, tid: int) -> None:
     if not t["final_announced"]:
         stats = await rt.repo.player_stats(tid)
         await rt.repo.store_awards(tid, awards_engine.compute_awards(stats, champ, runner))
-        bracket = await rt.repo.bracket(tid)
-        final_match = next((b["match_id"] for b in bracket if b["stage"] == "FINAL"), None)
-        card = await rt.repo.scorecard(final_match) if final_match else None
-        owner = champ["owner_name"] if champ and champ["kind"] == "HUMAN" else None
-        if card and champ:
-            # Fix 11: Championship announcement without inline buttons
-            await notify.group(rt, t["group_id"], m.champion_text(card, champ, owner), markup=None)
-        await notify.group(rt, t["group_id"], m.awards_text(await rt.repo.awards(tid)), markup=None)
+        
+        # Update single group summary message with Final result, Champion, and MVPs
+        await update_group_tournament_summary(rt, t)
+
         for tm in teams.values():
             if tm["kind"] == "HUMAN":
                 won = champ and tm["id"] == champ["id"]

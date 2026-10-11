@@ -56,3 +56,17 @@ async def set_dashboard(rt: IplRuntime, t: dict, text: str, markup: Any = None) 
         sent = await send_message(rt.ctx, t["group_id"], text, reply_markup=markup)
         if sent:
             await rt.repo.update(t["id"], dashboard_message_id=sent.message_id)
+
+
+async def set_group_summary(rt: IplRuntime, t: dict, text: str) -> None:
+    """Edit the tournament's single post-league summary message; re-post only if it was deleted."""
+    tid = t["id"]
+    gid = t["group_id"]
+    async with rt.ctx.lock(("ipl-summary", tid)):
+        fresh = await rt.repo.get(tid)
+        mid = (fresh or t).get("summary_message_id")
+        if mid and await safe_edit(rt.ctx, gid, mid, text, reply_markup=None) != "gone":
+            return
+        sent = await send_message(rt.ctx, gid, text, reply_markup=None)
+        if sent:
+            await rt.repo.update(tid, summary_message_id=sent.message_id)

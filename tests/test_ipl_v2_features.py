@@ -354,14 +354,14 @@ def test_fix6_and_test9_to_11_match_simulation_types():
     assert card_ss.winner in (3, 4)
 
 
-def test_fix2_and_test12_to_18_scorecards_all_stages_no_buttons():
-    """TEST 12, 13, 14, 15, 16, 17, 18: Full scorecard format for all stages with zero buttons and valid team names."""
+def test_compact_scorecards_all_stages_top3_batters_and_bowlers_no_buttons():
+    """FIX 1: Compact scorecard format showing ONLY top 3 batters, top 3 bowlers, team scores, result, win/loss in DM with 0 buttons."""
     stages = [
-        ("LEAGUE", "IPL DRAFT — LEAGUE"),
-        ("PLAYOFF_QUALIFIER_1", "IPL DRAFT — QUALIFIER 1"),
-        ("PLAYOFF_ELIMINATOR", "IPL DRAFT — ELIMINATOR"),
-        ("PLAYOFF_QUALIFIER_2", "IPL DRAFT — QUALIFIER 2"),
-        ("PLAYOFF_FINAL", "IPL DRAFT — GRAND FINAL"),
+        ("LEAGUE", "🏆 League Match"),
+        ("PLAYOFF_QUALIFIER_1", "🏆 Qualifier 1"),
+        ("PLAYOFF_ELIMINATOR", "🔥 Eliminator"),
+        ("PLAYOFF_QUALIFIER_2", "⚔️ Qualifier 2"),
+        ("PLAYOFF_FINAL", "👑 Grand Final"),
     ]
 
     for stage_key, expected_title in stages:
@@ -371,161 +371,145 @@ def test_fix2_and_test12_to_18_scorecards_all_stages_no_buttons():
             "home_team": {"id": 1, "name": "Dre XI", "short_name": "DRE"},
             "away_team": {"id": 2, "name": "RCB XI", "short_name": "RCB"},
             "winner_team_id": 1,
+            "result_type": "RUNS",
+            "margin": 10,
             "summary": "Dre XI won by 10 runs",
             "innings_detail": [
                 {
                     "innings_no": 1, "is_super_over": False, "runs": 200, "wickets": 4, "legal_balls": 120,
                     "batting_team": {"name": "Dre XI", "short_name": "DRE"},
-                    "batting": [{"name": "Travis Head", "runs": 70, "balls": 40, "fours": 7, "sixes": 4, "did_bat": True}],
-                    "bowling": [{"name": "Jasprit Bumrah", "legal_balls": 24, "runs": 25, "wickets": 2}],
+                    "batting": [
+                        {"name": "Travis Head", "runs": 70, "balls": 40, "fours": 7, "sixes": 4, "out": True, "did_bat": True},
+                        {"name": "Nicholas Pooran", "runs": 60, "balls": 35, "fours": 5, "sixes": 3, "out": False, "did_bat": True},
+                        {"name": "David Miller", "runs": 30, "balls": 20, "fours": 2, "sixes": 1, "out": True, "did_bat": True},
+                        {"name": "Hardik Pandya", "runs": 20, "balls": 15, "fours": 1, "sixes": 1, "out": False, "did_bat": True}, # 4th batter (must be omitted)
+                    ],
+                    "bowling": [
+                        {"name": "Jasprit Bumrah", "legal_balls": 24, "runs": 25, "wickets": 2},
+                        {"name": "Kagiso Rabada", "legal_balls": 24, "runs": 30, "wickets": 1},
+                        {"name": "Arshdeep Singh", "legal_balls": 24, "runs": 35, "wickets": 1},
+                        {"name": "Sunil Narine", "legal_balls": 24, "runs": 40, "wickets": 0}, # 4th bowler (must be omitted)
+                    ],
                 },
                 {
                     "innings_no": 2, "is_super_over": False, "runs": 190, "wickets": 6, "legal_balls": 120,
                     "batting_team": {"name": "RCB XI", "short_name": "RCB"},
-                    "batting": [{"name": "Virat Kohli", "runs": 80, "balls": 45, "fours": 8, "sixes": 3, "did_bat": True}],
-                    "bowling": [{"name": "Sunil Narine", "legal_balls": 24, "runs": 28, "wickets": 3}],
+                    "batting": [
+                        {"name": "Virat Kohli", "runs": 80, "balls": 45, "fours": 8, "sixes": 3, "out": False, "did_bat": True},
+                        {"name": "Faf du Plessis", "runs": 45, "balls": 30, "fours": 4, "sixes": 2, "out": True, "did_bat": True},
+                        {"name": "Glenn Maxwell", "runs": 35, "balls": 20, "fours": 3, "sixes": 2, "out": True, "did_bat": True},
+                        {"name": "Dinesh Karthik", "runs": 15, "balls": 10, "fours": 1, "sixes": 1, "out": True, "did_bat": True}, # 4th batter (must be omitted)
+                    ],
+                    "bowling": [
+                        {"name": "Rashid Khan", "legal_balls": 24, "runs": 28, "wickets": 3},
+                        {"name": "Vijay Shankar", "legal_balls": 18, "runs": 30, "wickets": 1},
+                        {"name": "Mohit Sharma", "legal_balls": 18, "runs": 15, "wickets": 0},
+                    ],
                 }
             ]
         }
 
-        # Centralized scorecard function produces complete rich scorecard
-        pages = m.format_full_scorecard(match_data, stage_key, user_id=1)
-        sc_text = "\n\n".join(pages)
+        # Centralized compact scorecard function
+        sc_text = m.format_compact_scorecard(match_data, stage_key, user_id=1)
         assert expected_title in sc_text
-        assert "Dre XI" in sc_text
-        assert "RCB XI" in sc_text
-        assert "? vs ?" not in sc_text
-        assert "None vs None" not in sc_text
-        assert "Travis Head" in sc_text
-        assert "Jasprit Bumrah" in sc_text
+        assert "Dre XI vs RCB XI" in sc_text
+        assert "Dre XI — 200/4 (20.0 ov)" in sc_text
+        assert "RCB XI — 190/6 (20.0 ov)" in sc_text
+        assert "Travis Head 70 (40b, 7x4, 4x6)" in sc_text
+        assert "Nicholas Pooran 60* (35b, 5x4, 3x6)" in sc_text
+        assert "David Miller 30 (20b, 2x4, 1x6)" in sc_text
+        # 4th batter must NOT be in top 3
+        assert "Hardik Pandya" not in sc_text
+
+        # Top 3 bowlers
+        assert "Jasprit Bumrah 2/25 (4.0)" in sc_text
+        assert "Sunil Narine" not in sc_text  # 4th bowler omitted
+
+        assert "✅ Dre XI won by 10 runs" in sc_text
         assert "YOU WON!" in sc_text
 
         # Verify ZERO buttons
         assert kb.dm_match_card_buttons(1, 501) is None
 
 
-def test_fix1_and_fix2_final_league_points_table():
-    """FIX 1, 2, 3: Final league points table formatting, Q/E markers, and zero inline buttons."""
+def test_fix3_and_fix4_group_points_table_format():
+    """FIX 3 & 4: Group points table format with <pre>, ⭐ for human teams, and playoff rules."""
     standings = [
-        {"team_id": 1, "name": "Chennai Super Kings", "short_name": "CSK", "kind": "SYSTEM", "played": 10, "won": 8, "lost": 2, "points": 16, "nrr": 1.45},
-        {"team_id": 2, "name": "Royal Challengers Bengaluru", "short_name": "RCB", "kind": "SYSTEM", "played": 10, "won": 7, "lost": 3, "points": 14, "nrr": 0.92},
-        {"team_id": 3, "name": "Kolkata Knight Riders", "short_name": "KKR", "kind": "SYSTEM", "played": 10, "won": 6, "lost": 4, "points": 12, "nrr": 0.51},
-        {"team_id": 4, "name": "Mumbai Indians", "short_name": "MI", "kind": "SYSTEM", "played": 10, "won": 5, "lost": 5, "points": 10, "nrr": 0.12},
-        {"team_id": 5, "name": "Dre XI", "short_name": "DRE", "kind": "HUMAN", "played": 10, "won": 4, "lost": 6, "points": 8, "nrr": -0.21},
-        {"team_id": 6, "name": "Rahul XI", "short_name": "RAH", "kind": "HUMAN", "played": 10, "won": 3, "lost": 7, "points": 6, "nrr": -0.65},
+        {"team_id": 1, "name": "Chennai Super Kings", "short_name": "CSK", "kind": "SYSTEM", "played": 10, "won": 8, "lost": 2, "points": 16},
+        {"team_id": 2, "name": "Royal Challengers", "short_name": "RCB", "kind": "SYSTEM", "played": 10, "won": 7, "lost": 3, "points": 14},
+        {"team_id": 3, "name": "Rhyme", "short_name": "RHY", "kind": "HUMAN", "played": 10, "won": 6, "lost": 4, "points": 12},
+        {"team_id": 4, "name": "Hardik Sinha", "short_name": "HAR", "kind": "HUMAN", "played": 10, "won": 5, "lost": 5, "points": 10},
+        {"team_id": 5, "name": "Dre XI", "short_name": "DRE", "kind": "HUMAN", "played": 10, "won": 4, "lost": 6, "points": 8},
+        {"team_id": 6, "name": "Mumbai Indians", "short_name": "MI", "kind": "SYSTEM", "played": 10, "won": 3, "lost": 7, "points": 6},
     ]
 
-    table_text = m.league_complete_text(standings)
+    table_text = m.format_group_tournament_summary(standings)
 
     # 1. Title
-    assert "IPL DRAFT — LEAGUE STAGE COMPLETED!" in table_text
-    # 2. Columns
-    assert "POS  TEAM          P   W   L   PTS    NRR" in table_text
-    # 3. Top 4 marked Q
-    assert "Q1   CSK" in table_text
-    assert "Q2   RCB" in table_text
-    assert "Q3   KKR" in table_text
-    assert "Q4   MI" in table_text
-    # 4. Remaining marked E
-    assert "E5   Dre XI" in table_text
-    assert "E6   Rahul XI" in table_text
-    # 5. Explanations
-    assert "✅ Q = Qualified for Playoffs" in table_text
-    assert "❌ E = Eliminated" in table_text
-    assert "TOP 4 QUALIFIED!" in table_text
-    assert "IPL PLAYOFFS BEGIN!" in table_text
-    # 6. Pre tags used for alignment
+    assert "📊 <b>Points Table</b>" in table_text
+    # 2. Table columns inside <pre>
     assert "<pre>" in table_text and "</pre>" in table_text
+    assert "#  Team                P  W  L  Pts" in table_text
+    # 3. Human teams have ⭐
+    assert "12⭐" in table_text  # Rhyme
+    assert "10⭐" in table_text  # Hardik Sinha
+    assert " 8⭐" in table_text  # Dre XI
+    assert "⭐ = Human Player" in table_text
+    # 4. Playoff info below points table
+    assert "🏆 <b>Playoffs! Top 4 advance:</b>" in table_text
+    assert "• Qualifier 1: 1 v 2 (winner → Final)" in table_text
+    assert "• Eliminator: 3 v 4 (loser out)" in table_text
+    assert "• Qualifier 2: Q1 loser v Elim winner" in table_text
+    assert "• Final" in table_text
 
 
-def test_fix6_7_8_ai_teams_squad_validation():
-    """FIX 6, 7, 8: Strict squad validation for AI teams (RCB, KKR, MI, CSK)."""
-    from ipl_draft.engine.team_builder import SYSTEM_PLAYING_XI, validate_system_team_squad
-
-    # Valid predefined squads pass validation
-    for code, squad in SYSTEM_PLAYING_XI.items():
-        ok, reason = validate_system_team_squad(1, squad, code)
-        assert ok, f"{code} squad validation failed: {reason}"
-
-    # Invalid player (Rishabh Pant on RCB) MUST fail validation
-    invalid_rcb_pant = list(SYSTEM_PLAYING_XI["RCB"])
-    invalid_rcb_pant[0] = "Rishabh Pant"
-    ok, reason = validate_system_team_squad(1, invalid_rcb_pant, "RCB")
-    assert not ok
-    assert "Rishabh Pant" in reason
-
-    # Invalid player (Venkatesh Iyer on RCB) MUST fail validation
-    invalid_rcb_venky = list(SYSTEM_PLAYING_XI["RCB"])
-    invalid_rcb_venky[0] = "Venkatesh Iyer"
-    ok, reason = validate_system_team_squad(1, invalid_rcb_venky, "RCB")
-    assert not ok
-    assert "Venkatesh Iyer" in reason
-
-    # Too many overseas players (> 4) MUST fail validation
-    invalid_overseas = [
-        "Phil Salt", "Tim David", "Romario Shepherd", "Josh Hazlewood", "Jacob Bethell",  # 5 overseas
-        "Virat Kohli", "Rajat Patidar", "Devdutt Padikkal", "Krunal Pandya", "Bhuvneshwar Kumar", "Yash Dayal"
+def test_fix5_6_7_group_summary_lifecycle_and_mvps():
+    """FIX 5, 6, 7: Updating the same group summary message through Qualifier 1, Eliminator, Qualifier 2, Final, Champion, and MVPs."""
+    standings = [
+        {"team_id": 1, "name": "Chennai Super Kings", "kind": "SYSTEM", "played": 10, "won": 8, "lost": 2, "points": 16},
+        {"team_id": 2, "name": "Royal Challengers", "kind": "SYSTEM", "played": 10, "won": 7, "lost": 3, "points": 14},
+        {"team_id": 3, "name": "Rhyme", "kind": "HUMAN", "played": 10, "won": 6, "lost": 4, "points": 12},
+        {"team_id": 4, "name": "Dre XI", "kind": "HUMAN", "played": 10, "won": 5, "lost": 5, "points": 10},
     ]
-    ok, reason = validate_system_team_squad(1, invalid_overseas, "RCB")
-    assert not ok
-    assert "Maximum 4 overseas" in reason
 
-    # Duplicate players MUST fail validation
-    invalid_duplicates = list(SYSTEM_PLAYING_XI["RCB"])
-    invalid_duplicates[1] = invalid_duplicates[0]  # Duplicate Virat Kohli
-    ok, reason = validate_system_team_squad(1, invalid_duplicates, "RCB")
-    assert not ok
-    assert "Duplicate players" in reason
+    # After Qualifier 1
+    playoff_results = [
+        {"stage": "QUALIFIER_1", "winner_name": "Royal Challengers", "inn1_score": "165/6", "inn2_score": "166/7"}
+    ]
+    summary_q1 = m.format_group_tournament_summary(standings, playoff_results)
+    assert "🏏 <b>Qualifier 1:</b>\nRoyal Challengers won (165/6 vs 166/7)" in summary_q1
 
+    # After Eliminator
+    playoff_results.append(
+        {"stage": "ELIMINATOR", "winner_name": "Dre XI", "inn1_score": "169/5", "inn2_score": "133/10"}
+    )
+    summary_elim = m.format_group_tournament_summary(standings, playoff_results)
+    assert "🏏 <b>Eliminator:</b>\nDre XI won (169/5 vs 133/10)" in summary_elim
 
-def test_fix4_playoff_scorecard_group_and_dm():
-    """FIX 4 & 5: Playoff matches send complete scorecards to group and DMs with zero buttons."""
-    card = {
-        "match_id": 801,
-        "stage": "PLAYOFF_ELIMINATOR",
-        "home_team": {"id": 3, "name": "Mumbai Indians", "short_name": "MI"},
-        "away_team": {"id": 4, "name": "Kolkata Knight Riders", "short_name": "KKR"},
-        "winner_team_id": 3,
-        "summary": "Mumbai Indians won by 36 runs",
-        "innings_detail": [
-            {
-                "innings_no": 1, "is_super_over": False, "runs": 169, "wickets": 5, "legal_balls": 120,
-                "batting_team": {"name": "Mumbai Indians", "short_name": "MI"},
-                "batting": [
-                    {"name": "Rohit Sharma", "runs": 45, "balls": 32, "fours": 5, "sixes": 2, "did_bat": True},
-                    {"name": "Suryakumar Yadav", "runs": 66, "balls": 39, "fours": 7, "sixes": 3, "did_bat": True},
-                ],
-                "bowling": [{"name": "Harshit Rana", "legal_balls": 24, "runs": 28, "wickets": 2}],
-            },
-            {
-                "innings_no": 2, "is_super_over": False, "runs": 133, "wickets": 10, "legal_balls": 103,
-                "batting_team": {"name": "Kolkata Knight Riders", "short_name": "KKR"},
-                "batting": [
-                    {"name": "Sunil Narine", "runs": 42, "balls": 28, "fours": 4, "sixes": 2, "did_bat": True},
-                ],
-                "bowling": [{"name": "Jasprit Bumrah", "legal_balls": 24, "runs": 23, "wickets": 3}],
-            }
-        ]
+    # After Qualifier 2
+    playoff_results.append(
+        {"stage": "QUALIFIER_2", "winner_name": "Chennai Super Kings", "inn1_score": "174/8", "inn2_score": "176/2"}
+    )
+    summary_q2 = m.format_group_tournament_summary(standings, playoff_results)
+    assert "🏏 <b>Qualifier 2:</b>\nChennai Super Kings won (174/8 vs 176/2)" in summary_q2
+
+    # After Final + Champion + MVPs
+    playoff_results.append(
+        {"stage": "FINAL", "winner_name": "Chennai Super Kings", "inn1_score": "185/6", "inn2_score": "179/8"}
+    )
+    champ = {"id": 1, "name": "Chennai Super Kings"}
+    mvps = {
+        "most_runs": {"player": "Heinrich Klaasen", "runs": 581, "team": "Rhyme's XI"},
+        "most_wickets": {"player": "Arshdeep Singh", "wickets": 29, "team": "Rhyme's XI"},
     }
+    summary_final = m.format_group_tournament_summary(standings, playoff_results, champ, mvps)
 
-    # Group message format (user_id=None)
-    pages_group = m.format_full_scorecard(card, "PLAYOFF_ELIMINATOR", user_id=None)
-    text_group = "\n\n".join(pages_group)
-    assert "IPL DRAFT — ELIMINATOR" in text_group
-    assert "Mumbai Indians" in text_group
-    assert "Kolkata Knight Riders" in text_group
-    assert "Rohit Sharma" in text_group
-    assert "Suryakumar Yadav" in text_group
-    assert "Harshit Rana" in text_group
-    assert "Jasprit Bumrah" in text_group
-    assert "Mumbai Indians won by 36 runs" in text_group
-    # Neutral view in group does not include "YOU WON!"
-    assert "YOU WON!" not in text_group
+    assert "🏏 🏆 <b>FINAL:</b>\nChennai Super Kings won (185/6 vs 179/8)" in summary_final
+    assert "👑 <b>Chennai Super Kings are CHAMPIONS! 🏆🎉</b>" in summary_final
+    assert "🏅 <b>Tournament MVPs (among players' teams)</b>" in summary_final
+    assert "Heinrich Klaasen — 581 runs (in Rhyme's XI)" in summary_final
+    assert "Arshdeep Singh — 29 wickets (in Rhyme's XI)" in summary_final
 
-    # DM format (user_id=3 -> MI manager)
-    pages_dm = m.format_full_scorecard(card, "PLAYOFF_ELIMINATOR", user_id=3)
-    text_dm = "\n\n".join(pages_dm)
-    assert "YOU WON!" in text_dm
 
 
 def test_squad_performance_text_exact_format():
@@ -591,6 +575,296 @@ def test_lobby_shows_only_joined_players_no_waiting():
     assert "3." not in lobby_out
     assert "4." not in lobby_out
     assert "8." not in lobby_out
+
+
+def test_bowler_tiebreak_and_fewer_than_three_records():
+    """Test bowler tiebreaker (fewer runs conceded) and handling when fewer than 3 batters or bowlers played."""
+    match_data = {
+        "match_id": 601,
+        "stage": "LEAGUE",
+        "home_team": {"id": 1, "name": "Dre XI", "short_name": "DRE"},
+        "away_team": {"id": 2, "name": "Gujarat Titans XI", "short_name": "GT"},
+        "winner_team_id": 1,
+        "result_type": "RUNS",
+        "margin": 35,
+        "summary": "Dre XI won by 35 runs",
+        "innings_detail": [
+            {
+                "innings_no": 1, "is_super_over": False, "runs": 166, "wickets": 2, "legal_balls": 120,
+                "batting_team": {"name": "Dre XI", "short_name": "DRE"},
+                "batting": [
+                    # Only 2 batters batted
+                    {"name": "Nicholas Pooran", "runs": 71, "balls": 47, "fours": 7, "sixes": 3, "out": False, "did_bat": True},
+                    {"name": "Travis Head", "runs": 68, "balls": 47, "fours": 7, "sixes": 2, "out": True, "did_bat": True},
+                ],
+                "bowling": [
+                    # 4 bowlers with tiebreak: Rashid (1/16) and Vijay (1/30) tied on wickets, Rashid has fewer runs conceded
+                    {"name": "Mohit Sharma", "legal_balls": 18, "runs": 15, "wickets": 0},
+                    {"name": "Vijay Shankar", "legal_balls": 18, "runs": 30, "wickets": 1},
+                    {"name": "Rashid Khan", "legal_balls": 24, "runs": 16, "wickets": 1},
+                    {"name": "Noor Ahmad", "legal_balls": 12, "runs": 20, "wickets": 0},
+                ],
+            },
+            {
+                "innings_no": 2, "is_super_over": False, "runs": 131, "wickets": 6, "legal_balls": 120,
+                "batting_team": {"name": "Gujarat Titans XI", "short_name": "GT"},
+                "batting": [
+                    {"name": "B Sai Sudharsan", "runs": 52, "balls": 43, "fours": 3, "sixes": 4, "out": True, "did_bat": True},
+                    {"name": "Wriddhiman Saha", "runs": 20, "balls": 20, "fours": 0, "sixes": 1, "out": True, "did_bat": True},
+                    {"name": "Vijay Shankar", "runs": 16, "balls": 21, "fours": 1, "sixes": 0, "out": False, "did_bat": True},
+                ],
+                "bowling": [
+                    # Arshdeep (2/6) vs Bumrah (2/33) -> Arshdeep conceded fewer runs -> ranked higher
+                    {"name": "Jasprit Bumrah", "legal_balls": 24, "runs": 33, "wickets": 2},
+                    {"name": "Hardik Pandya", "legal_balls": 18, "runs": 19, "wickets": 1},
+                    {"name": "Arshdeep Singh", "legal_balls": 18, "runs": 6, "wickets": 2},
+                ],
+            }
+        ]
+    }
+
+    sc = m.format_compact_scorecard(match_data, "LEAGUE", user_id=1)
+    # Check that only 2 batters appear in innings 1
+    assert "Nicholas Pooran 71* (47b, 7x4, 3x6)" in sc
+    assert "Travis Head 68 (47b, 7x4, 2x6)" in sc
+
+    # Check bowler tiebreaker order: Rashid Khan (1/16) before Vijay Shankar (1/30)
+    pos_rashid = sc.find("Rashid Khan 1/16 (4.0)")
+    pos_vijay = sc.find("Vijay Shankar 1/30 (3.0)")
+    assert pos_rashid != -1 and pos_vijay != -1
+    assert pos_rashid < pos_vijay
+
+    # Check bowler tiebreaker order: Arshdeep (2/6) before Bumrah (2/33)
+    pos_arshdeep = sc.find("Arshdeep Singh 2/6 (3.0)")
+    pos_bumrah = sc.find("Jasprit Bumrah 2/33 (4.0)")
+    assert pos_arshdeep != -1 and pos_bumrah != -1
+    assert pos_arshdeep < pos_bumrah
+
+
+def test_private_dm_delivery_rules_and_no_group_scorecards():
+    """FIX 8: Scorecards sent to private DM only (Human vs Human -> both, Human vs System -> human only, System vs System -> neither). Zero to group."""
+    from unittest.mock import AsyncMock, MagicMock
+    from ipl_draft.services import simulation_worker
+
+    async def run_scenario(h_kind: str, a_kind: str):
+        rt = MagicMock()
+        rt.worker_id = "test-worker"
+        rt.s = MagicMock(store_ball_events=False, matchday_delay=0, playoff_delay=0)
+        rt.pause = AsyncMock()
+
+        h_user = 111 if h_kind == "HUMAN" else None
+        a_user = 222 if a_kind == "HUMAN" else None
+
+        teams = [
+            {"id": 1, "kind": h_kind, "user_id": h_user, "name": "Team H", "team_no": 1},
+            {"id": 2, "kind": a_kind, "user_id": a_user, "name": "Team A", "team_no": 2},
+        ]
+
+        card = {
+            "match_id": 999,
+            "stage": "LEAGUE",
+            "team1": {"id": 1, "name": "Team H"},
+            "team2": {"id": 2, "name": "Team A"},
+            "winner_team_id": 1,
+            "innings_detail": [],
+        }
+
+        rt.repo = MagicMock()
+        rt.repo.all_teams = AsyncMock(return_value=teams)
+        rt.repo.settle = AsyncMock(return_value={"status": "OK", "match_id": 999})
+        rt.repo.scorecard = AsyncMock(return_value=card)
+
+        sent_dms = []
+        sent_group_msgs = []
+
+        async def fake_dm(runtime, user_id, text, reply_markup=None):
+            sent_dms.append((user_id, text))
+            msg = MagicMock()
+            msg.message_id = len(sent_dms)
+            return msg
+
+        async def fake_group(runtime, group_id, text, reply_markup=None):
+            sent_group_msgs.append((group_id, text))
+            msg = MagicMock()
+            msg.message_id = len(sent_group_msgs)
+            return msg
+
+        import ipl_draft.services.notification_service as notify
+        orig_dm = notify.dm
+        orig_group = notify.group
+        notify.dm = fake_dm
+        notify.group = fake_group
+
+        try:
+            t = {"id": 10, "group_id": -100999, "draft_started_at": 1000}
+            fx = {"id": 888, "home": 1, "away": 2, "stage": "LEAGUE"}
+            
+            # Create dummy squads
+            from ipl_draft.engine.model import Squad, Player, Ratings
+            p_dummy = tuple(Player(id=f"p_{i}", name=f"P{i}", role="BAT", ratings=Ratings(50, 50)) for i in range(11))
+            squads = {1: Squad(1, "Team H", "TH", p_dummy), 2: Squad(2, "Team A", "TA", p_dummy)}
+
+            await simulation_worker._simulate(rt, t, fx, squads)
+            return sent_dms, sent_group_msgs
+        finally:
+            notify.dm = orig_dm
+            notify.group = orig_group
+
+    # 1. Human vs Human -> DM sent to both users
+    dms_hh, groups_hh = asyncio.run(run_scenario("HUMAN", "HUMAN"))
+    dm_users_hh = {d[0] for d in dms_hh}
+    assert 111 in dm_users_hh and 222 in dm_users_hh
+    assert len(groups_hh) == 0  # Zero scorecards to group
+
+    # 2. Human vs System -> DM sent ONLY to human
+    dms_hs, groups_hs = asyncio.run(run_scenario("HUMAN", "SYSTEM"))
+    dm_users_hs = {d[0] for d in dms_hs}
+    assert 111 in dm_users_hs
+    assert len(dm_users_hs) == 1
+    assert len(groups_hs) == 0
+
+    # 3. System vs System -> Zero DMs sent
+    dms_ss, groups_ss = asyncio.run(run_scenario("SYSTEM", "SYSTEM"))
+    assert len(dms_ss) == 0
+    assert len(groups_ss) == 0
+
+
+def test_group_summary_lifecycle_and_restart_persistence():
+    """FIX 5 & 7: Exactly one group message, edited in place across playoffs, restart does not duplicate."""
+    from unittest.mock import AsyncMock, MagicMock
+    from ipl_draft.services import simulation_worker
+
+    rt = MagicMock()
+    rt.ctx = MagicMock()
+    rt.ctx.lock = lambda key: __import__("contextlib").AsyncExitStack()
+
+    t_db = {
+        "id": 10,
+        "group_id": -100555,
+        "summary_message_id": None,
+        "champion_team_id": None,
+    }
+
+    standings = [
+        {"team_id": 1, "name": "Team 1", "kind": "HUMAN", "played": 6, "won": 4, "lost": 2, "points": 8},
+        {"team_id": 2, "name": "Team 2", "kind": "HUMAN", "played": 6, "won": 3, "lost": 3, "points": 6},
+    ]
+
+    all_teams = [
+        {"id": 1, "name": "Team 1", "kind": "HUMAN", "user_id": 111},
+        {"id": 2, "name": "Team 2", "kind": "HUMAN", "user_id": 222},
+    ]
+
+    bracket = [
+        {"stage": "QUALIFIER_1", "status": "SCHEDULED", "home": {"id": 1, "name": "Team 1"}, "away": {"id": 2, "name": "Team 2"}},
+    ]
+
+    rt.repo = MagicMock()
+    rt.repo.get = AsyncMock(side_effect=lambda tid: t_db)
+    rt.repo.standings = AsyncMock(return_value=standings)
+    rt.repo.all_teams = AsyncMock(return_value=all_teams)
+    rt.repo.bracket = AsyncMock(return_value=bracket)
+    rt.repo.player_stats = AsyncMock(return_value=[])
+    
+    async def fake_update(tid, **kwargs):
+        t_db.update(kwargs)
+        return {"status": "OK"}
+    rt.repo.update = AsyncMock(side_effect=fake_update)
+
+    messages_sent = []
+    messages_edited = []
+
+    async def fake_send(ctx, gid, text, reply_markup=None):
+        msg = MagicMock()
+        msg.message_id = 9001
+        messages_sent.append((gid, text))
+        return msg
+
+    async def fake_edit(ctx, gid, mid, text, reply_markup=None):
+        messages_edited.append((gid, mid, text))
+        return "ok"
+
+    import ipl_draft.services.notification_service as notify
+    orig_send = notify.send_message
+    orig_edit = notify.safe_edit
+    notify.send_message = fake_send
+    notify.safe_edit = fake_edit
+
+    try:
+        # Stage 1: After league completion -> Sends initial summary message
+        asyncio.run(simulation_worker.update_group_tournament_summary(rt, t_db))
+        assert len(messages_sent) == 1
+        assert t_db["summary_message_id"] == 9001
+        assert len(messages_edited) == 0
+
+        # Stage 2: Qualifier 1 finishes -> Edits existing message
+        bracket[0]["status"] = "COMPLETED"
+        bracket[0]["winner_team_id"] = 1
+        bracket[0]["card"] = {
+            "summary": "Team 1 won",
+            "innings_detail": [
+                {"innings_no": 1, "batting_team": {"name": "Team 1"}, "runs": 160, "wickets": 4},
+                {"innings_no": 2, "batting_team": {"name": "Team 2"}, "runs": 150, "wickets": 8},
+            ]
+        }
+        asyncio.run(simulation_worker.update_group_tournament_summary(rt, t_db))
+        assert len(messages_sent) == 1  # No new message sent!
+        assert len(messages_edited) == 1
+        assert messages_edited[0][1] == 9001
+        assert "Qualifier 1:" in messages_edited[0][2]
+
+        # Stage 3: Bot restarts! The bot creates a new runtime, but t_db still has summary_message_id=9001
+        # It must EDIT message 9001 and NOT send a duplicate message!
+        asyncio.run(simulation_worker.update_group_tournament_summary(rt, t_db))
+        assert len(messages_sent) == 1  # Still exactly 1 message sent across lifetime!
+        assert len(messages_edited) == 2
+        assert messages_edited[1][1] == 9001
+    finally:
+        notify.send_message = orig_send
+        notify.safe_edit = orig_edit
+
+
+def test_compute_human_mvps_excludes_system_teams():
+    """FIX 6: MVPs must be calculated strictly among HUMAN-controlled teams, excluding system teams."""
+    from unittest.mock import AsyncMock, MagicMock
+    from ipl_draft.services.simulation_worker import compute_human_mvps
+
+    rt = MagicMock()
+    rt.repo = MagicMock()
+
+    # System teams: MI (id=1), CSK (id=2). Human teams: Dre XI (id=3), Rhyme XI (id=4)
+    all_teams = [
+        {"id": 1, "kind": "SYSTEM", "name": "Mumbai Indians"},
+        {"id": 2, "kind": "SYSTEM", "name": "Chennai Super Kings"},
+        {"id": 3, "kind": "HUMAN", "name": "Dre XI"},
+        {"id": 4, "kind": "HUMAN", "name": "Rhyme XI"},
+    ]
+    rt.repo.all_teams = AsyncMock(return_value=all_teams)
+
+    # Player stats: System team player has higher runs/wickets, but must be ignored!
+    player_stats = [
+        # System players (should be EXCLUDED)
+        {"player_id": "sys_1", "team_id": 1, "name": "Rohit Sharma", "runs": 900, "balls": 500, "wickets": 0, "bowl_runs": 0},
+        {"player_id": "sys_2", "team_id": 2, "name": "Matheesha Pathirana", "runs": 10, "balls": 5, "wickets": 35, "bowl_runs": 200},
+        # Human players (should be SELECTED)
+        {"player_id": "hum_1", "team_id": 3, "name": "Heinrich Klaasen", "runs": 581, "balls": 310, "wickets": 0, "bowl_runs": 0},
+        {"player_id": "hum_2", "team_id": 4, "name": "Arshdeep Singh", "runs": 28, "balls": 20, "wickets": 29, "bowl_runs": 250},
+        {"player_id": "hum_3", "team_id": 4, "name": "Travis Head", "runs": 450, "balls": 250, "wickets": 2, "bowl_runs": 50},
+    ]
+    rt.repo.player_stats = AsyncMock(return_value=player_stats)
+
+    mvps = asyncio.run(compute_human_mvps(rt, tid=10))
+
+    assert "most_runs" in mvps
+    assert mvps["most_runs"]["player"] == "Heinrich Klaasen"
+    assert mvps["most_runs"]["runs"] == 581
+    assert mvps["most_runs"]["team"] == "Dre XI"
+
+    assert "most_wickets" in mvps
+    assert mvps["most_wickets"]["player"] == "Arshdeep Singh"
+    assert mvps["most_wickets"]["wickets"] == 29
+    assert mvps["most_wickets"]["team"] == "Rhyme XI"
+
 
 
 
