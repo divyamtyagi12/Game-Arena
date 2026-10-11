@@ -86,16 +86,17 @@ DM_PROMPT = "⚠️ Please start the bot privately before joining IPL Draft."
 
 
 # ───────────────────────── draft ─────────────────────────
-def offer_text(team: Mapping, offer: Mapping, picks_done: int, seconds: int) -> str:
-    cands = offer["candidates"]
-    lines = [f"{c['pos']}. {player_line(c['player'])}" for c in cands]
-    dl = clock(offer.get("deadline_at"))
+def offer_text(team: Mapping, offer: Mapping, picks_done: int, seconds: int = 45, roster: Sequence[Mapping] | None = None) -> str:
+    from .engine.draft_engine import still_required_text
+    round_no = offer.get("round_no") or (picks_done + 1)
+    req_str = still_required_text(roster or [])
+    tname = esc(team.get("name", "Your Team"))
     return (
-        "🏏 <b>IPL DRAFT</b>\n\n"
-        f"🎲 <b>DRAFT ROUND {offer['round_no']}/11</b>\n\n"
-        f"👤 Team: <b>{esc(team['name'])}</b>\n\n🏏 Players Selected: <b>{picks_done}/11</b>\n\n{LINE}\n\n"
-        "🎯 <b>CHOOSE ONE PLAYER</b>\n\n" + "\n".join(lines) + f"\n\n{LINE}\n"
-        f"⏱ <b>{seconds} seconds</b> — deadline {dl}\n<i>If time runs out, one is picked for you.</i>")
+        f"🏏 <b>IPL DRAFT — {tname}</b>\n\n"
+        f"Pick {round_no}/11 — choose a player:\n"
+        f"<i>Still required: {req_str}</i>"
+    )
+
 
 
 def confirm_text(player: Mapping) -> str:
@@ -558,21 +559,8 @@ def bracket_text(bracket: Sequence[Mapping], standings: Sequence[Mapping]) -> st
     return "\n".join(out)
 
 
-def format_group_tournament_summary(
-    standings: Sequence[Mapping],
-    playoff_results: Sequence[Mapping] | None = None,
-    champ: Mapping | None = None,
-    mvps: Mapping | None = None,
-) -> str:
-    """Format single consolidated group tournament summary message.
-
-    Contains:
-    - Points Table (with ⭐ for human managers, mobile fixed-width)
-    - Playoff bracket rules
-    - Playoff match results as completed (Qualifier 1, Eliminator, Qualifier 2, Final)
-    - Champion announcement
-    - Tournament MVPs (among human teams only)
-    """
+def format_group_points_table(standings: Sequence[Mapping]) -> str:
+    """Points table sent to the group after league stage finishes."""
     table_rows = ["#  Team                P  W  L  Pts"]
     for i, r in enumerate(standings, 1):
         raw_name = r.get("name") or r.get("short_name") or f"Team {i}"
@@ -584,7 +572,7 @@ def format_group_tournament_summary(
         star = "⭐" if r.get("kind") == "HUMAN" else ""
         table_rows.append(f"{i:>2} {tname:<19} {p:>2} {w:>2} {l:>2} {pts:>3}{star}")
 
-    table_block = (
+    return (
         "📊 <b>Points Table</b>\n\n"
         "<pre>\n"
         + "\n".join(table_rows)
@@ -592,15 +580,67 @@ def format_group_tournament_summary(
         "⭐ = Human Player"
     )
 
-    playoff_rules_block = (
-        "🏆 <b>Playoffs! Top 4 advance:</b>\n\n"
+
+
+def playoff_structure_text() -> str:
+    """Playoffs structure message popped into group right below points table."""
+    return (
+        "🏆 <b>Playoffs! Top 4 advance:</b>\n"
         "• Qualifier 1: 1 v 2 (winner → Final)\n"
         "• Eliminator: 3 v 4 (loser out)\n"
         "• Qualifier 2: Q1 loser v Elim winner\n"
         "• Final"
     )
 
+
+def format_playoff_result_line(stage: str, card: Mapping) -> str:
+    """Format single playoff result message popping into group when match completes."""
+    raw_stage = str(stage).removeprefix("PLAYOFF_").upper()
+    STAGE_TITLES = {
+        "QUALIFIER_1": "🏏 <b>Qualifier 1:</b>",
+        "ELIMINATOR": "🏏 <b>Eliminator:</b>",
+        "QUALIFIER_2": "🏏 <b>Qualifier 2:</b>",
+        "FINAL": "🏏 🏆 <b>FINAL:</b>",
+    }
+    head = STAGE_TITLES.get(raw_stage, f"🏏 <b>{raw_stage.replace('_', ' ').title()}:</b>")
+
+    t1 = card.get("team1") or card.get("home_team") or {}
+    t2 = card.get("team2") or card.get("away_team") or {}
+    winner_id = card.get("winner_team_id")
+    win_team = t1 if winner_id == t1.get("id") else t2 if winner_id == t2.get("id") else None
+    wname = resolve_team_name(win_team, "Winner")
+
+    main_inns = [i for i in (card.get("innings_detail") or card.get("innings") or []) if not i.get("is_super_over")]
+    s1 = f"{main_inns[0]['runs']}/{main_inns[0]['wickets']}" if len(main_inns) > 0 else "-"
+    s2 = f"{main_inns[1]['runs']}/{main_inns[1]['wickets']}" if len(main_inns) > 1 else "-"
+
+    return f"{head} {esc(wname)} won ({s1} vs {s2})"
+
+
+def format_mvps_text(mvps: Mapping) -> str:
+    """Format tournament MVPs message popping into group after final."""
+    lines = ["🏅 <b>Tournament MVPs (among players' teams)</b>\n"]
+    if mvps.get("most_runs"):
+        mr = mvps["most_runs"]
+        lines.append(f"🏏 <b>Most Runs:</b> {esc(mr['player'])} — {mr['runs']} runs (in {esc(mr['team'])})")
+    if mvps.get("most_wickets"):
+        mw = mvps["most_wickets"]
+        w_word = "wickets" if mw["wickets"] != 1 else "wicket"
+        lines.append(f"🎯 <b>Most Wickets:</b> {esc(mw['player'])} — {mw['wickets']} {w_word} (in {esc(mw['team'])})")
+    return "\n".join(lines)
+
+
+def format_group_tournament_summary(
+    standings: Sequence[Mapping],
+    playoff_results: Sequence[Mapping] | None = None,
+    champ: Mapping | None = None,
+    mvps: Mapping | None = None,
+) -> str:
+    """Format consolidated group tournament summary message."""
+    table_block = format_group_points_table(standings)
+    playoff_rules_block = playoff_structure_text()
     blocks = [table_block, playoff_rules_block]
+
 
     if playoff_results:
         STAGE_HEADS = {

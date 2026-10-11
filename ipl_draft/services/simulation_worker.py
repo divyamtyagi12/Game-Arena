@@ -314,8 +314,12 @@ async def update_group_tournament_summary(rt: IplRuntime, t: dict) -> None:
 
 async def _league_completed(rt: IplRuntime, t: dict) -> bool:
     tid = t["id"]
-    await update_group_tournament_summary(rt, t)
     standings = await rt.repo.standings(tid)
+    # Message 1 pops: Points Table
+    await notify.group(rt, t["group_id"], m.format_group_points_table(standings))
+    # Message 2 pops: Playoff structure
+    await notify.group(rt, t["group_id"], m.playoff_structure_text())
+
     rank = {r["team_id"]: r["rank"] for r in standings}
     for tm in await rt.repo.all_teams(tid):
         if tm["kind"] == "HUMAN":
@@ -341,9 +345,13 @@ async def _playoff(rt: IplRuntime, t: dict) -> bool:
         return False
 
     res = await _simulate(rt, t, fx, squads)
-    if res.get("status") == "OK":
-        # Edit the single group summary message (points table + playoff results)
-        await update_group_tournament_summary(rt, t)
+    if res.get("status") == "OK" and res.get("match_id"):
+        # Match result message pops into group one by one (Image 1 style)
+        card = await rt.repo.scorecard(res["match_id"])
+        if card:
+            line = m.format_playoff_result_line(fx.get("stage", ""), card)
+            await notify.group(rt, t["group_id"], line)
+
     await rt.pause(rt.s.playoff_delay)
     return True
 
@@ -361,18 +369,26 @@ async def finalize(rt: IplRuntime, tid: int) -> None:
     teams = {x["id"]: x for x in await rt.repo.all_teams(tid)}
     champ, runner = teams.get(t["champion_team_id"]), teams.get(t["runner_up_team_id"])
     await rt.repo.record_results(tid)
-    if not t["final_announced"]:
+    if not t.get("final_announced"):
+        await rt.repo.update(tid, final_announced=True)
         stats = await rt.repo.player_stats(tid)
         await rt.repo.store_awards(tid, awards_engine.compute_awards(stats, champ, runner))
-        
-        # Update single group summary message with Final result, Champion, and MVPs
-        await update_group_tournament_summary(rt, t)
+
+        # Champion announcement pops into group
+        if champ:
+            await notify.group(rt, t["group_id"], f"👑 <b>{m.esc(champ['name'])} are CHAMPIONS! 🏆🎉</b>")
+
+        # Tournament MVPs announcement pops into group
+        mvps = await compute_human_mvps(rt, tid)
+        if mvps and (mvps.get("most_runs") or mvps.get("most_wickets")):
+            await notify.group(rt, t["group_id"], m.format_mvps_text(mvps))
 
         for tm in teams.values():
             if tm["kind"] == "HUMAN":
                 won = champ and tm["id"] == champ["id"]
                 await notify.dm(rt, tm["user_id"], ("🏆 <b>YOU ARE THE IPL DRAFT CHAMPION!</b>" if won else
                                                     f"🏁 IPL Draft finished — champion: <b>{m.esc(champ['name']) if champ else '?'}</b>."))
+
                 try:
                     roster_data = await rt.repo.team_roster(tm["id"])
                     squad_players = roster_data.get("players", []) if roster_data else []

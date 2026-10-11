@@ -151,7 +151,13 @@ async def pick(rt, context, q, offer_id: int, pos: int) -> None:
         pl = res.get("player") or {}
         p_name = pl.get("name") or pl.get("display_name") or "Player"
         return await safe_answer(q, f"✅ {p_name} selected!")
+    if st == "ROLE_REQUIRED":
+        return await safe_answer(q, res.get("message", "⚠️ Role required to meet squad minimums!"), True)
     await safe_answer(q, "❌ This selection is already locked.", True)
+
+
+async def blocked_pick(rt, context, q, pos: int = 1) -> None:
+    await safe_answer(q, "⚠️ You cannot pick this player: you still need required roles (3 bowlers, 1 keeper, 1 all-rounder)!", True)
 
 
 async def back(rt, context, q, offer_id: int) -> None:
@@ -163,6 +169,7 @@ async def confirm(rt, context, q, offer_id: int, pos: int) -> None:
 
 
 async def my_team(rt, context, q, team_id: int) -> None:
+
     roster = await rt.repo.team_roster(team_id)
     if not roster or roster["team"].get("user_id") != q.from_user.id:
         return await safe_answer(q, "❌ That isn't your team.", True)
@@ -426,9 +433,10 @@ async def next_match(rt, context, q, tid: int) -> None:
 
 
 ROUTES = {
-    "j": join, "lv": leave, "st": force_start, "ru": rules, "pk": pick, "bk": back, "cf": confirm,
+    "j": join, "lv": leave, "st": force_start, "ru": rules, "pk": pick, "blk": blocked_pick, "bk": back, "cf": confirm,
     "tm": my_team, "ts": status, "tb": table, "fx": fixtures, "mh": history, "at": all_teams,
     "br": bracket, "sc": scorecard, "sp": scorecard_p, "tr": table_refresh, "fp": fixtures_p,
     "mp": history_p, "ap": all_teams_p, "sm": summary, "lb": leaderboard, "pa": play_again,
     "bo": bo_start, "bop": bo_pick, "bou": bo_undo, "bor": bo_reset, "boc": bo_confirm, "nx": next_match,
 }
+

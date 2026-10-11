@@ -866,5 +866,142 @@ def test_compute_human_mvps_excludes_system_teams():
     assert mvps["most_wickets"]["team"] == "Rhyme XI"
 
 
+def test_mandatory_roles_enforcement_3_bowlers_1_wk_1_ar():
+    """Verify that 3 bowlers, 1 keeper, and 1 all-rounder are strictly enforced."""
+    from ipl_draft.engine import draft_engine
+
+    roster = []
+    # 0 players picked: 3 bowlers, 1 keeper, 1 all-rounder required
+    req = draft_engine.still_required_text(roster)
+    assert req == "3 bowler(s), 1 keeper, 1 all-rounder"
+    assert draft_engine.is_role_pick_allowed(roster, "BAT") is True
+    assert draft_engine.is_role_pick_allowed(roster, "BOWL") is True
+    assert draft_engine.is_role_pick_allowed(roster, "WK") is True
+    assert draft_engine.is_role_pick_allowed(roster, "AR") is True
+
+    # Pick 6 batters (total 6, 5 picks remaining)
+    roster = [{"role": "BAT"} for _ in range(6)]
+    # Needs: 3 bowlers + 1 keeper + 1 all-rounder = 5 picks needed! Picks remaining = 5!
+    # Batter should be BLOCKED!
+    assert draft_engine.is_role_pick_allowed(roster, "BAT") is False
+    # Bowler, Keeper, and All-rounder MUST be ALLOWED!
+    assert draft_engine.is_role_pick_allowed(roster, "BOWL") is True
+    assert draft_engine.is_role_pick_allowed(roster, "WK") is True
+    assert draft_engine.is_role_pick_allowed(roster, "AR") is True
+
+    # Pick 1 bowler (total 7, 4 picks remaining)
+    roster.append({"role": "BOWL"})
+    req2 = draft_engine.still_required_text(roster)
+    assert req2 == "2 bowler(s), 1 keeper, 1 all-rounder"
+    assert draft_engine.is_role_pick_allowed(roster, "BAT") is False
+    assert draft_engine.is_role_pick_allowed(roster, "BOWL") is True
+
+    # Pick 2 more bowlers, 1 keeper, 1 all-rounder (total 11)
+    roster.extend([{"role": "BOWL"}, {"role": "BOWL"}, {"role": "WK"}, {"role": "AR"}])
+    req_done = draft_engine.still_required_text(roster)
+    assert req_done == "None (all minimums met)"
+
+
+def test_draft_appearance_matching_image_2():
+    """Verify draft prompt text and buttons match Image 2 format."""
+    team = {"name": "Dre XI"}
+    offer = {"round_no": 1}
+    roster = []
+
+    text = m.offer_text(team, offer, picks_done=0, roster=roster)
+    assert "IPL DRAFT — Dre XI" in text
+    assert "Pick 1/11 — choose a player:" in text
+    assert "Still required: 3 bowler(s), 1 keeper, 1 all-rounder" in text
+
+    # Verify buttons contain role emojis and country codes
+    cands = [
+        {"pos": 1, "player": {"name": "Alec Stewart", "role": "WK", "nationality": "England"}},
+        {"pos": 2, "player": {"name": "Graham Gooch", "role": "BAT", "nationality": "England"}},
+        {"pos": 3, "player": {"name": "Andrew Flintoff", "role": "AR", "nationality": "England"}},
+        {"pos": 4, "player": {"name": "Phil DeFreitas", "role": "BOWL", "nationality": "England"}},
+        {"pos": 5, "player": {"name": "Virat Kohli", "role": "BAT", "nationality": "India"}},
+    ]
+    markup = kb.offer(101, cands, 1, roster=roster)
+    btn_labels = [btn.text for row in markup.inline_keyboard for btn in row]
+
+    assert "🧤 Alec Stewart (ENG)" in btn_labels
+    assert "🏏 Graham Gooch (ENG)" in btn_labels
+    assert "🔄 Andrew Flintoff (ENG)" in btn_labels
+    assert "🎯 Phil DeFreitas (ENG)" in btn_labels
+    assert "🏏 Virat Kohli (IND)" in btn_labels
+    assert "📋 MY TEAM" in btn_labels
+
+
+def test_playoff_messages_pop_one_by_one_matching_image_1():
+    """Verify separate individual messages pop one by one matching Image 1."""
+    # 1. Playoff structure text
+    p_struct = m.playoff_structure_text()
+    assert "🏆 <b>Playoffs! Top 4 advance:</b>" in p_struct
+    assert "• Qualifier 1: 1 v 2 (winner → Final)" in p_struct
+    assert "• Eliminator: 3 v 4 (loser out)" in p_struct
+    assert "• Qualifier 2: Q1 loser v Elim winner" in p_struct
+    assert "• Final" in p_struct
+
+    # 2. Individual match result messages
+    card_q1 = {
+        "team1": {"id": 1, "name": "RCB"},
+        "team2": {"id": 2, "name": "FENIL"},
+        "winner_team_id": 2,
+        "innings": [
+            {"runs": 158, "wickets": 8},
+            {"runs": 160, "wickets": 8},
+        ]
+    }
+    line_q1 = m.format_playoff_result_line("QUALIFIER_1", card_q1)
+    assert line_q1 == "🏏 <b>Qualifier 1:</b> FENIL won (158/8 vs 160/8)"
+
+    card_elim = {
+        "team1": {"id": 1, "name": "MI"},
+        "team2": {"id": 3, "name": "Rhyme"},
+        "winner_team_id": 3,
+        "innings": [
+            {"runs": 57, "wickets": 10},
+            {"runs": 58, "wickets": 5},
+        ]
+    }
+    line_elim = m.format_playoff_result_line("ELIMINATOR", card_elim)
+    assert line_elim == "🏏 <b>Eliminator:</b> Rhyme won (57/10 vs 58/5)"
+
+    card_q2 = {
+        "team1": {"id": 1, "name": "CSK"},
+        "team2": {"id": 3, "name": "Rhyme"},
+        "winner_team_id": 3,
+        "innings": [
+            {"runs": 154, "wickets": 6},
+            {"runs": 155, "wickets": 7},
+        ]
+    }
+    line_q2 = m.format_playoff_result_line("QUALIFIER_2", card_q2)
+    assert line_q2 == "🏏 <b>Qualifier 2:</b> Rhyme won (154/6 vs 155/7)"
+
+    card_final = {
+        "team1": {"id": 2, "name": "FENIL"},
+        "team2": {"id": 3, "name": "Rhyme"},
+        "winner_team_id": 3,
+        "innings": [
+            {"runs": 142, "wickets": 10},
+            {"runs": 145, "wickets": 4},
+        ]
+    }
+    line_final = m.format_playoff_result_line("FINAL", card_final)
+    assert line_final == "🏏 🏆 <b>FINAL:</b> Rhyme won (142/10 vs 145/4)"
+
+    # 3. MVPs text
+    mvps = {
+        "most_runs": {"player": "Jonny Bairstow", "runs": 478, "team": "Hardik Sinha's XI"},
+        "most_wickets": {"player": "Rashid Khan", "wickets": 31, "team": "Manish's XI"},
+    }
+    mvp_text = m.format_mvps_text(mvps)
+    assert "🏅 <b>Tournament MVPs (among players' teams)</b>" in mvp_text
+    assert "Jonny Bairstow — 478 runs (in Hardik Sinha's XI)" in mvp_text
+    assert "Rashid Khan — 31 wickets (in Manish's XI)" in mvp_text
+
+
+
 
 

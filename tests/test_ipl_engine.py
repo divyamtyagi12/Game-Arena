@@ -353,12 +353,14 @@ def test_no_hidden_rating_text_leaks_into_messages():
     p = {"id": "x", "name": "Test <Player>", "role": "BAT", "nationality": "India", "bowling_type": "NONE",
          "ratings": rows[0]["ratings"], "overall_rating": 91}
     card = {"pos": 1, "player": p}
-    text = m.offer_text({"name": "Mine XI"}, {"round_no": 1, "candidates": [card], "deadline_at": None}, 0, 45)
+    text = m.offer_text({"name": "Mine <Team> XI"}, {"round_no": 1, "candidates": [card], "deadline_at": None}, 0, 45)
     low = text.lower()
     for word in ("rating", "overall", "batting_rating", "power_hitting", "tier", "91"):
         assert word not in low, word
-    assert "&lt;Player&gt;" in text, "HTML must be escaped"
+    assert "&lt;Team&gt;" in text, "HTML must be escaped"
+    assert "&lt;Player&gt;" in m.confirm_text(p), "HTML must be escaped"
     assert "rating" not in m.confirm_text(p).lower()
+
 
 
 def test_settings_defaults_and_bounds(monkeypatch=None):

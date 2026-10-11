@@ -16,10 +16,52 @@ def open_bot(bot_username: str) -> Markup:
     return Markup([[Btn("🤖 START THE BOT", url=f"https://t.me/{bot_username}?start=ipl")]])
 
 
-def offer(offer_id: int, cands: Sequence[dict], team_id: int) -> Markup:
-    rows = [[Btn(c["player"]["name"], callback_data=f"ipl:pk:{offer_id}:{c['pos']}")] for c in cands]
+NAT_CODE = {
+    "India": "IND",
+    "England": "ENG",
+    "Australia": "AUS",
+    "South Africa": "SA",
+    "West Indies": "WI",
+    "New Zealand": "NZ",
+    "Afghanistan": "AFG",
+    "Sri Lanka": "SL",
+    "Bangladesh": "BAN",
+    "Zimbabwe": "ZIM",
+    "Ireland": "IRE",
+}
+
+ROLE_ICON = {
+    "WK": "🧤",
+    "BAT": "🏏",
+    "AR": "🔄",
+    "BOWL": "🎯",
+}
+
+
+def offer(offer_id: int, cands: Sequence[dict], team_id: int, roster: Sequence[dict] | None = None) -> Markup:
+    from .engine.draft_engine import is_role_pick_allowed
+    rows = []
+    players = roster or []
+    for c in cands:
+        p = c.get("player") or {}
+        role = p.get("role", "BAT")
+        icon = ROLE_ICON.get(role, "🏏")
+        name = p.get("name") or p.get("display_name") or "Player"
+        nat = p.get("nationality", "")
+        code = NAT_CODE.get(nat, (nat[:3].upper() if len(nat) >= 3 else ""))
+        label = f"{icon} {name} ({code})" if code else f"{icon} {name}"
+        pos = c.get("pos") or c.get("position", 1)
+
+        if is_role_pick_allowed(players, role):
+            cb_data = f"ipl:pk:{offer_id}:{pos}"
+        else:
+            cb_data = f"ipl:blk:{pos}"
+            label = f"🚫 {label}"
+        rows.append([Btn(label, callback_data=cb_data)])
+
     rows.append([Btn("📋 MY TEAM", callback_data=f"ipl:tm:{team_id}")])
     return Markup(rows)
+
 
 
 def draft_done(team_id: int, tid: int) -> Markup:

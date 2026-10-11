@@ -44,8 +44,10 @@ async def deliver_offer(rt: IplRuntime, team: dict) -> None:
         return
     if res.get("dm_message_id") or team.get("auto_draft"):
         return
-    text = m.offer_text(team, res, res["picks_done"], rt.s.draft_seconds)
-    sent = await notify.dm(rt, team["user_id"], text, kb.offer(res["offer_id"], res["candidates"], team["id"]))
+    roster = await rt.repo.team_roster(team["id"])
+    players = roster["players"] if roster else []
+    text = m.offer_text(team, res, res["picks_done"], rt.s.draft_seconds, roster=players)
+    sent = await notify.dm(rt, team["user_id"], text, kb.offer(res["offer_id"], res["candidates"], team["id"], roster=players))
     if sent:
         await rt.repo.set_offer_message(res["offer_id"], sent.message_id)
     else:
@@ -67,10 +69,30 @@ async def _own_open_offer(rt: IplRuntime, user_id: int, offer_id: int) -> tuple[
 
 
 async def confirm_pick(rt: IplRuntime, user_id: int, offer_id: int, pos: int, message_id: int | None) -> dict:
+    from ..engine.draft_engine import is_role_pick_allowed, still_required_text
+    offer = None
+    if hasattr(rt.repo, "get_offer") and callable(rt.repo.get_offer):
+        res_o = rt.repo.get_offer(offer_id)
+        offer = await res_o if asyncio.iscoroutine(res_o) else res_o
+    if offer and isinstance(offer, dict) and offer.get("team_id"):
+        res_r = rt.repo.team_roster(offer["team_id"])
+        roster = await res_r if asyncio.iscoroutine(res_r) else res_r
+        players = roster["players"] if isinstance(roster, dict) and roster.get("players") else []
+        cands = offer.get("candidates") or []
+        cand = next((c for c in cands if c.get("pos") == pos or c.get("position") == pos), None)
+        if cand:
+            p = cand.get("player") or {}
+            role = p.get("role")
+            if role and not is_role_pick_allowed(players, role):
+                req = still_required_text(players)
+                return {"status": "ROLE_REQUIRED", "message": f"⚠️ Cannot pick {role}! Still required: {req}."}
+
     res = await rt.repo.pick(offer_id, pos, user_id, "USER", rt.s.auto_after_timeouts)
     if res.get("status") == "OK":
         await after_pick(rt, res, message_id, auto=False)
     return res
+
+
 
 
 async def after_pick(rt: IplRuntime, res: dict, message_id: int | None, *, auto: bool) -> None:
