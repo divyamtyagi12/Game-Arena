@@ -260,7 +260,7 @@ language sql stable security definer set search_path = public, ipl_private as $$
            order by x.id limit p_limit) tm
 $$;
 
-create or replace function ipl_finish_drafting(p_tid bigint, p_expected_system int default 5) returns jsonb
+create or replace function ipl_finish_drafting(p_tid bigint, p_expected_system int default 4) returns jsonb
 language plpgsql security definer set search_path = public, ipl_private as $$
 declare t ipl_tournaments%rowtype; h_open int; bo_open int; sys_n int; sys_open int;
 begin
@@ -560,3 +560,66 @@ language sql immutable as $$
     when p_old = 'PLAYOFF_FINAL'          then p_new = 'COMPLETED'
     else false end
 $$;
+
+-- ══════════════════════════════════════════════════════════════════════
+-- V4 PATCH (appended to v3; safe to re-run)
+--   • Reduce system franchises from 5 → 4 (drop DC / Delhi Capitals)
+--   • ipl_finish_drafting: default p_expected_system changed 5 → 4
+--   • ipl_create_fixtures: allow 6–16 teams (was 7–13) so 4 system + 2 human works
+-- ══════════════════════════════════════════════════════════════════════
+
+create or replace function ipl_finish_drafting(p_tid bigint, p_expected_system int default 4) returns jsonb
+language plpgsql security definer set search_path = public, ipl_private as $$
+declare t ipl_tournaments%rowtype; h_open int; bo_open int; sys_n int; sys_open int;
+begin
+  select * into t from ipl_tournaments where id = p_tid for update;
+  if not found then return jsonb_build_object('status', 'NOT_FOUND'); end if;
+  if t.state in ('SYSTEM_TEAM_GENERATION', 'FIXTURE_GENERATION', 'LEAGUE_RUNNING', 'LEAGUE_COMPLETED', 'PLAYOFF_ELIMINATOR',
+                 'PLAYOFF_QUALIFIER_1', 'PLAYOFF_QUALIFIER_2', 'PLAYOFF_FINAL', 'COMPLETED') then
+    return jsonb_build_object('status', 'ALREADY', 'state', t.state);
+  end if;
+  if t.state <> 'DRAFTING' then return jsonb_build_object('status', 'BAD_STATE', 'state', t.state); end if;
+  select count(*) filter (where not squad_complete), count(*) filter (where not batting_order_confirmed)
+    into h_open, bo_open from ipl_tournament_teams where tournament_id = p_tid and kind = 'HUMAN';
+  if h_open > 0 then return jsonb_build_object('status', 'NOT_READY', 'why', 'humans_drafting', 'teams', h_open); end if;
+  if bo_open > 0 then return jsonb_build_object('status', 'NOT_READY', 'why', 'batting_order', 'teams', bo_open); end if;
+  select count(*), count(*) filter (where not squad_complete) into sys_n, sys_open
+    from ipl_tournament_teams where tournament_id = p_tid and kind = 'SYSTEM';
+  if sys_n < p_expected_system or sys_open > 0 then
+    return jsonb_build_object('status', 'NOT_READY', 'why', 'system_teams', 'have', sys_n, 'incomplete', sys_open);
+  end if;
+  update ipl_tournaments set state = 'SYSTEM_TEAM_GENERATION' where id = p_tid;
+  return jsonb_build_object('status', 'OK');
+end $$;
+
+create or replace function ipl_create_fixtures(p_tid bigint, p_fixtures jsonb) returns jsonb
+language plpgsql security definer set search_path = public, ipl_private as $$
+declare t ipl_tournaments%rowtype; n int; expected int; cnt int; f jsonb;
+begin
+  select * into t from ipl_tournaments where id = p_tid for update;
+  if not found then return jsonb_build_object('status', 'NOT_FOUND'); end if;
+  if t.state = 'LEAGUE_RUNNING' or exists (select 1 from ipl_fixtures where tournament_id = p_tid) then
+    return jsonb_build_object('status', 'OK', 'already', true);
+  end if;
+  if t.state <> 'FIXTURE_GENERATION' then return jsonb_build_object('status', 'BAD_STATE', 'state', t.state); end if;
+  select count(*) into n from ipl_tournament_teams where tournament_id = p_tid;
+  -- allow 6–16 teams (4 system + 2..8 human)
+  if n < 6 or n > 16 then return jsonb_build_object('status', 'BAD_TEAM_COUNT', 'teams', n); end if;
+  expected := n * (n - 1);
+  cnt := jsonb_array_length(p_fixtures);
+  if cnt <> expected then return jsonb_build_object('status', 'BAD_FIXTURE_COUNT', 'have', cnt, 'need', expected); end if;
+  for f in select * from jsonb_array_elements(p_fixtures) loop
+    insert into ipl_fixtures (tournament_id, stage, match_no, matchday, leg, home_team_id, away_team_id)
+    values (p_tid, 'LEAGUE', (f->>'match_no')::int, (f->>'matchday')::int, (f->>'leg')::smallint,
+            (f->>'home')::bigint, (f->>'away')::bigint);
+  end loop;
+  -- every ordered pair exactly once => every pair of teams meets exactly twice
+  if (select count(distinct (least(home_team_id, away_team_id), greatest(home_team_id, away_team_id)))
+        from ipl_fixtures where tournament_id = p_tid) <> n * (n - 1) / 2 then
+    raise exception 'fixture list does not cover every pair';
+  end if;
+  insert into ipl_standings (tournament_id, team_id)
+    select p_tid, id from ipl_tournament_teams where tournament_id = p_tid on conflict do nothing;
+  update ipl_tournaments set state = 'LEAGUE_RUNNING', league_started_at = now() where id = p_tid;
+  return jsonb_build_object('status', 'OK', 'fixtures', cnt, 'teams', n);
+end $$;

@@ -1127,7 +1127,7 @@ begin
   end if;
   if t.state <> 'FIXTURE_GENERATION' then return jsonb_build_object('status', 'BAD_STATE', 'state', t.state); end if;
   select count(*) into n from ipl_tournament_teams where tournament_id = p_tid;
-  if n < 7 or n > 13 then return jsonb_build_object('status', 'BAD_TEAM_COUNT', 'teams', n); end if;
+  if n < 6 or n > 16 then return jsonb_build_object('status', 'BAD_TEAM_COUNT', 'teams', n); end if;
   expected := n * (n - 1);
   cnt := jsonb_array_length(p_fixtures);
   if cnt <> expected then return jsonb_build_object('status', 'BAD_FIXTURE_COUNT', 'have', cnt, 'need', expected); end if;

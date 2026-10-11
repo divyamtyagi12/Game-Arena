@@ -376,6 +376,6 @@ def test_settings_defaults_and_bounds(monkeypatch=None):
 
 def test_rules_text_mentions_key_rules():
     t = m.rules_text(45)
-    for s in ("11", "Eliminator", "Qualifier", "double round robin", "5 system franchises"):
+    for s in ("11", "Eliminator", "Qualifier", "double round robin", "4 system franchises"):
         assert s.lower() in t.lower(), s
     assert re.search(r"2.8 human", t)

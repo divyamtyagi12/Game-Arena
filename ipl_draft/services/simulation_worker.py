@@ -176,19 +176,32 @@ async def _simulate(rt: IplRuntime, t: dict, fx: dict, squads: dict[int, Squad])
     if res.get("status") not in ("OK", "ALREADY"):
         raise RuntimeError(f"settle {fx['id']}: {res}")
 
-    # Deliver final match result card with buttons to each human user's DM
+    # Deliver final scorecard pages automatically to each human user's DM — no buttons needed
     if humans and res.get("match_id"):
-        card = await rt.repo.match_card(res["match_id"])
-        if card:
-            btn = kb.dm_match_card_buttons(tid, res["match_id"])
-            for h in humans:
-                uid = h["user_id"]
-                result_text = m.dm_match_result(card, h["id"])
-                mid = dm_msgs.get(uid)
-                if mid:
-                    await notify.edit_dm(rt, uid, mid, result_text, btn)
-                else:
-                    await notify.dm(rt, uid, result_text, btn)
+        try:
+            card = await rt.repo.scorecard(res["match_id"])
+            if card:
+                # Build full scorecard pages (rich, detailed)
+                pages = m.full_scorecard_pages(card)
+                for h in humans:
+                    uid = h["user_id"]
+                    your_team_id = h["id"]
+                    mid = dm_msgs.get(uid)
+                    for page_no, page_text in enumerate(pages):
+                        # personalise the last page with win/loss message
+                        if page_no == len(pages) - 1:
+                            winner_id = card.get("winner_team_id")
+                            if winner_id == your_team_id:
+                                page_text += "\n\n🎉 <b>YOU WON!</b>"
+                            elif winner_id is not None:
+                                page_text += "\n\n😔 <b>You lost.</b>"
+                        if page_no == 0 and mid:
+                            # edit the placeholder message with page 1
+                            await notify.edit_dm(rt, uid, mid, page_text)
+                        else:
+                            await notify.dm(rt, uid, page_text)
+        except Exception:  # noqa: BLE001
+            log.exception("Failed to deliver full scorecard DM for match %s", res.get("match_id"))
 
     return res
 
@@ -265,7 +278,7 @@ async def _playoff(rt: IplRuntime, t: dict) -> bool:
     if res.get("status") == "OK" and fx["stage"] != "FINAL":
         card = await rt.repo.match_card(res["match_id"])
         if card:
-            await notify.group(rt, t["group_id"], m.match_card_text(card), kb.match_buttons(tid, card["match_id"]))
+            await notify.group(rt, t["group_id"], m.match_card_text(card))
     await rt.pause(rt.s.playoff_delay)
     return True
 

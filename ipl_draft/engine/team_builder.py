@@ -18,7 +18,6 @@ FRANCHISES = [
     ("CSK", "Chennai Super Kings",        "🟡"),
     ("RCB", "Royal Challengers Bengaluru", "🔴"),
     ("KKR", "Kolkata Knight Riders",      "🟣"),
-    ("DC",  "Delhi Capitals",             "🔷"),
 ]
 FRANCHISE_EMOJI = {c: e for c, _, e in FRANCHISES}
 

@@ -54,7 +54,7 @@ def lobby_text(t: Mapping, teams: Sequence[Mapping]) -> str:
     status = {"LOBBY": "", "CANCELLED": "\n\n❌ <b>Cancelled</b>"}.get(t["state"], "\n\n🔒 <b>Lobby closed — the draft has started!</b>")
     return (
         "🏏 <b>IPL DRAFT</b>\n\n🏆 <b>MULTIPLAYER CRICKET TOURNAMENT</b>\n\n"
-        f"👥 Human Players: <b>{n}/{mx}</b>\n🤖 System Teams: <b>5</b>\n\n"
+        f"👥 Human Players: <b>{n}/{mx}</b>\n🤖 System Teams: <b>4</b>\n\n"
         "🏏 Squad Size: <b>11 Players</b>\n\n🎲 Draft System:\n<b>11 Random Choices Per Pick</b>\n\n"
         "🏆 Tournament:\n<b>Double Round Robin + IPL Playoffs</b>\n\n"
         f"{LINE}\n\n👥 <b>JOINED PLAYERS</b>\n\n" + "\n".join(rows) + f"\n\n{LINE}"
@@ -64,7 +64,7 @@ def lobby_text(t: Mapping, teams: Sequence[Mapping]) -> str:
 def rules_text(draft_seconds: int = 45) -> str:
     return (
         "📖 <b>IPL DRAFT — RULES</b>\n\n"
-        "👥 2–8 human managers + <b>5 system franchises</b> (RCB 🔴, KKR 🟣, MI 🔵, CSK 🟡, DC 🔷).\n\n"
+        "👥 2–8 human managers + <b>4 system franchises</b> (RCB 🔴, KKR 🟣, MI 🔵, CSK 🟡).\n\n"
         f"🎲 <b>Draft (in your DM):</b> 11 rounds. Each round you get <b>11 random IPL cricketers</b> — pick exactly "
         f"<b>one</b> ({draft_seconds}s; if you're slow one is picked for you). No role restrictions: all batters is allowed… "
         "but the match engine will notice.\n\n"
@@ -215,15 +215,19 @@ def human_result_line(c: Mapping, human_ids: set[int]) -> str | None:
 
 # ───────────────────────── match cards ─────────────────────────
 def result_sentence(c: Mapping) -> str:
-    t1, t2 = c["team1"], c["team2"]
-    win = t1 if c["winner_team_id"] == t1["id"] else t2 if c["winner_team_id"] == t2["id"] else None
+    if c.get("summary"):
+        return esc(c["summary"])
+    t1, t2 = c.get("team1") or {}, c.get("team2") or {}
+    win = t1 if c.get("winner_team_id") == t1.get("id") else t2 if c.get("winner_team_id") == t2.get("id") else None
     if not win:
         return "NO RESULT"
-    n = esc(win["name"].upper())
-    if c["result_type"] == "RUNS":
-        return f"{n} WINS BY {c['margin']} RUN{'S' if c['margin'] != 1 else ''}!"
-    if c["result_type"] == "WICKETS":
-        return f"{n} WINS BY {c['margin']} WICKET{'S' if c['margin'] != 1 else ''}!"
+    n = esc(win.get("name", "?").upper())
+    res_type = c.get("result_type")
+    margin = c.get("margin", 0)
+    if res_type == "RUNS":
+        return f"{n} WINS BY {margin} RUN{'S' if margin != 1 else ''}!"
+    if res_type == "WICKETS":
+        return f"{n} WINS BY {margin} WICKET{'S' if margin != 1 else ''}!"
     return f"{n} WINS THE SUPER OVER!"
 
 
@@ -281,6 +285,106 @@ def scorecard_pages(sc: Mapping) -> list[str]:
         lines.append("</pre>")
         pages.append("\n".join(lines))
     return pages
+
+
+def full_scorecard_pages(c: Mapping) -> list[str]:
+    """Rich automatic DM scorecard — no buttons.
+    Format matches:  header / innings 1 / innings 2 / result+winner
+    Split into Telegram-safe pages (<= 4096 chars each)."""
+    DIVIDER = "━━━━━━━━━━━━━━━━━━━━"
+    TG_LIMIT = 4000   # leave headroom
+
+    # Resolve team names robustly (team1/team2 or home_team/away_team)
+    t1 = c.get("team1") or c.get("home_team") or {}
+    t2 = c.get("team2") or c.get("away_team") or {}
+    t1_name = esc(t1.get("name") or t1.get("short_name") or "Team 1")
+    t2_name = esc(t2.get("name") or t2.get("short_name") or "Team 2")
+
+    raw_stage = str(c.get("stage", "LEAGUE"))
+    stage = STAGE_LABEL.get(raw_stage.removeprefix("PLAYOFF_"), STAGE_LABEL.get(raw_stage, raw_stage.title()))
+    header = (f"🏏 <b>IPL DRAFT — {esc(stage.upper())}</b>\n\n"
+              f"🔥 <b>{t1_name}</b> vs <b>{t2_name}</b>")
+
+    def _innings_block(inn: Mapping) -> str:
+        bt = inn.get("batting_team") or {}
+        bat_name = esc((bt.get("name") or bt.get("short_name") or "?").upper())
+        total = f"{inn['runs']}/{inn['wickets']} ({overs_str(inn['legal_balls'])} ov)"
+        block = [f"\n{DIVIDER}\n", f"🏏 <b>{bat_name} — {total}</b>\n"]
+
+        # batting table
+        batters = [b for b in inn.get("batting", []) if b.get("did_bat")]
+        if batters:
+            block.append("<pre>BATSMAN              R    B   4s  6s")
+            for b in batters:
+                mark = "" if b.get("out") else "*"
+                nm = b.get("name", "?")[:19]
+                block.append(
+                    f"{nm:<19} {str(b['runs']) + mark:>4} {b['balls']:>4} "
+                    f"{b['fours']:>4} {b['sixes']:>3}"
+                )
+            block.append("</pre>")
+
+        # bowling table
+        bowlers = [w for w in inn.get("bowling", []) if w.get("legal_balls", 0) > 0]
+        if bowlers:
+            block.append("\n🎯 <b>BOWLING</b>")
+            block.append("<pre>BOWLER               O    R   W")
+            for w in bowlers:
+                ov = overs_str(w["legal_balls"])
+                nm = w.get("name", "?")[:19]
+                block.append(f"{nm:<19} {ov:>4} {w['runs']:>4} {w['wickets']:>3}")
+            block.append("</pre>")
+
+        # extras
+        ex = inn.get("extras") or {}
+        total_ex = sum(ex.values()) if isinstance(ex, dict) else 0
+        if total_ex:
+            block.append(f"<i>Extras: {total_ex} (w {ex.get('wides', 0)}, nb {ex.get('noballs', 0)}, b {ex.get('byes', 0)}, lb {ex.get('legbyes', 0)})</i>")
+
+        return "\n".join(block)
+
+    # Build all innings blocks
+    main_innings = [i for i in (c.get("innings_detail") or []) if not i.get("is_super_over")]
+    super_over = [i for i in (c.get("innings_detail") or []) if i.get("is_super_over")]
+
+    inn_blocks = [_innings_block(i) for i in main_innings]
+
+    # Result
+    pom = c.get("pom")
+    bb = c.get("best_bowler")
+    result_block = f"\n{DIVIDER}\n\n🏆 <b>{result_sentence(c)}</b>"
+    if pom:
+        details = []
+        if pom.get("balls"):
+            details.append(f"{pom['runs']} runs, {pom['balls']} balls")
+        elif pom.get("runs"):
+            details.append(f"{pom['runs']} runs")
+        if pom.get("wickets"):
+            details.append(f"{pom['wickets']}/{pom.get('bowl_runs', 0)}")
+        det_str = f" ({', '.join(details)})" if details else ""
+        result_block += f"\n\n⭐ <b>PLAYER OF THE MATCH</b>: {esc(pom['name'])}{det_str}"
+    if bb and bb.get("wickets"):
+        result_block += f"\n🎯 <b>BEST BOWLER</b>: {esc(bb['name'])} ({bb['wickets']}/{bb['runs']})"
+    if super_over:
+        so_txt = " | ".join(
+            f"{i.get('batting_team', {}).get('short_name', '?')}: {i['runs']}/{i['wickets']}"
+            for i in super_over
+        )
+        result_block += f"\n<i>Super Over: {so_txt}</i>"
+
+    # Pack into Telegram-safe pages
+    pages: list[str] = []
+    current = header
+    for block in inn_blocks + [result_block]:
+        if len(current) + len(block) > TG_LIMIT:
+            pages.append(current)
+            current = block.lstrip("\n")
+        else:
+            current += block
+    pages.append(current)
+
+    return pages
+
 
 
 def fixtures_page_text(data: Mapping, page: int, per_page: int) -> str:

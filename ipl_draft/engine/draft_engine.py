@@ -9,7 +9,7 @@ import random
 from typing import Mapping, Sequence
 
 SQUAD = 11
-SYSTEM_TEAMS = 5
+SYSTEM_TEAMS = 4
 
 
 def required_pool(humans: int, margin: int = 20) -> int:

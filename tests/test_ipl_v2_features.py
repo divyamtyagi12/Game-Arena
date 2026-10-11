@@ -16,16 +16,16 @@ from ipl_draft import keyboards as kb
 from ipl_draft import messages as m
 
 
-def test_system_franchises_reduced_to_exact_five():
-    """Requirement 1: Exactly 5 system teams: RCB, KKR, MI, CSK, DC."""
-    assert len(FRANCHISES) == 5
+def test_system_franchises_reduced_to_exact_four():
+    """Requirement 1: Exactly 4 system teams: RCB, KKR, MI, CSK."""
+    assert len(FRANCHISES) == 4
     codes = {f[0] for f in FRANCHISES}
-    assert codes == {"RCB", "KKR", "MI", "CSK", "DC"}
+    assert codes == {"RCB", "KKR", "MI", "CSK"}
     payload = franchise_payload()
-    assert len(payload) == 5
+    assert len(payload) == 4
     payload_codes = {p["code"] for p in payload}
-    assert payload_codes == {"RCB", "KKR", "MI", "CSK", "DC"}
-    assert draft_engine.SYSTEM_TEAMS == 5
+    assert payload_codes == {"RCB", "KKR", "MI", "CSK"}
+    assert draft_engine.SYSTEM_TEAMS == 4
 
 
 def test_player_eligibility_logic():
@@ -149,6 +149,66 @@ def test_dm_match_result_and_buttons():
     assert "ipl:ts:1" in button_callbacks
 
 
+def test_automatic_full_scorecard_in_dm_format():
+    """Verify that full_scorecard_pages produces complete match scorecard without buttons."""
+    card = {
+        "match_id": 101,
+        "stage": "PLAYOFF_QUALIFIER_1",
+        "team1": {"id": 1, "name": "Dre XI", "short_name": "DRE"},
+        "team2": {"id": 2, "name": "RCB XI", "short_name": "RCB"},
+        "winner_team_id": 1,
+        "summary": "Dre XI won by 23 runs",
+        "pom": {"name": "Virat Kohli", "runs": 82, "balls": 50, "wickets": 0, "bowl_runs": 0},
+        "best_bowler": {"name": "Jasprit Bumrah", "wickets": 2, "runs": 28},
+        "innings_detail": [
+            {
+                "innings_no": 1,
+                "is_super_over": False,
+                "runs": 218,
+                "wickets": 3,
+                "legal_balls": 120,
+                "extras": {"wides": 5, "noballs": 1, "byes": 2, "legbyes": 4},
+                "batting_team": {"name": "Dre XI", "short_name": "DRE"},
+                "batting": [
+                    {"name": "Virat Kohli", "runs": 82, "balls": 50, "fours": 8, "sixes": 3, "out": False, "did_bat": True},
+                    {"name": "Rohit Sharma", "runs": 45, "balls": 30, "fours": 4, "sixes": 2, "out": True, "did_bat": True},
+                ],
+                "bowling": [
+                    {"name": "Jasprit Bumrah", "legal_balls": 24, "runs": 28, "wickets": 2},
+                ],
+            },
+            {
+                "innings_no": 2,
+                "is_super_over": False,
+                "runs": 195,
+                "wickets": 7,
+                "legal_balls": 120,
+                "extras": {"wides": 4, "noballs": 0, "byes": 1, "legbyes": 3},
+                "batting_team": {"name": "RCB XI", "short_name": "RCB"},
+                "batting": [
+                    {"name": "Faf du Plessis", "runs": 60, "balls": 38, "fours": 6, "sixes": 2, "out": True, "did_bat": True},
+                ],
+                "bowling": [
+                    {"name": "Rashid Khan", "legal_balls": 24, "runs": 30, "wickets": 3},
+                ],
+            }
+        ]
+    }
+    pages = m.full_scorecard_pages(card)
+    assert len(pages) >= 1
+    full_text = "\n".join(pages)
+    assert "IPL DRAFT — QUALIFIER 1" in full_text
+    assert "<b>Dre XI</b> vs <b>RCB XI</b>" in full_text
+    assert "<b>DRE XI — 218/3 (20.0 ov)</b>" in full_text
+    assert "Virat Kohli" in full_text
+    assert "Rohit Sharma" in full_text
+    assert "<b>RCB XI — 195/7 (20.0 ov)</b>" in full_text
+    assert "Dre XI won by 23 runs" in full_text
+    assert "<b>PLAYER OF THE MATCH</b>: Virat Kohli (82 runs, 50 balls)" in full_text
+    assert "<b>BEST BOWLER</b>: Jasprit Bumrah (2/28)" in full_text
+
+
+
 def test_system_draft_ready_before_user_draft():
     """Verify that system franchises are prepared and drafted before user draft."""
     from unittest.mock import AsyncMock, MagicMock
@@ -162,10 +222,9 @@ def test_system_draft_ready_before_user_draft():
         {"id": 2, "kind": "SYSTEM", "franchise_code": "KKR"},
         {"id": 3, "kind": "SYSTEM", "franchise_code": "MI"},
         {"id": 4, "kind": "SYSTEM", "franchise_code": "CSK"},
-        {"id": 5, "kind": "SYSTEM", "franchise_code": "DC"},
     ])
     rt.repo.system_progress = AsyncMock(return_value=[
-        {"team_id": i, "picks": 11, "done": True} for i in range(1, 6)
+        {"team_id": i, "picks": 11, "done": True} for i in range(1, 5)
     ])
     rt.repo.complete_system_teams = AsyncMock(return_value={"status": "OK"})
     rt.repo.batting_order_auto_assign = AsyncMock(return_value=None)
@@ -173,7 +232,7 @@ def test_system_draft_ready_before_user_draft():
     rt.ctx.lock = lambda key: __import__("contextlib").AsyncExitStack()
     asyncio.run(system_service.prepare_system_teams(rt, 10))
     assert rt.repo.complete_system_teams.called
-    assert rt.repo.batting_order_auto_assign.call_count == 5
+    assert rt.repo.batting_order_auto_assign.call_count == 4
 
 
 def test_create_fixtures_never_bypasses_the_validated_sql_function():
