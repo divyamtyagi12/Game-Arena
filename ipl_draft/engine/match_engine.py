@@ -82,6 +82,9 @@ def _form(rng: random.Random, consistency: int) -> float:
 
 
 def batting_order(squad: Squad) -> list[Player]:
+    """The manager's CONFIRMED order when the squad carries one (squad.ordered), else the engine's rating-based order."""
+    if squad.ordered:
+        return list(squad.players)
     return sorted(squad.players, key=lambda p: -(0.7 * p.ratings.batting_rating + 0.3 * p.ratings.power_hitting
                                                   + (3 if p.role in ("BAT", "WK") else 0)))
 
@@ -337,30 +340,33 @@ class MatchOutcome:
     result_type: str            # RUNS | WICKETS | TIE_SUPER_OVER | NO_RESULT
     margin: int | None
     super_overs: int
-    pom: str | None
-    best_bowler: str | None
+    pom: tuple[int, str] | None            # (team_id, player_id)
+    best_bowler: tuple[int, str] | None    # (team_id, player_id)
     summary: str
     seed: str
 
 
 def _super_over(rng: random.Random, first: Squad, second: Squad, no: int, used_bat: set, used_bowl: set):
     def order(sq: Squad) -> list[Player]:
-        pool = [p for p in batting_order(sq) if p.id not in used_bat] or batting_order(sq)
+        pool = [p for p in batting_order(sq) if (sq.team_id, p.id) not in used_bat] or batting_order(sq)
         best = sorted(pool, key=lambda p: -(p.ratings.power_hitting + p.ratings.death_overs_batting + p.ratings.batting_rating))
         return best[:3] + [p for p in batting_order(sq) if p not in best[:3]]
 
     def bowler(sq: Squad) -> list[Player]:
-        pool = [p for p in sq.players if p.id not in used_bowl] or list(sq.players)
+        pool = [p for p in sq.players if (sq.team_id, p.id) not in used_bowl] or list(sq.players)
         return [max(pool, key=lambda p: p.ratings.bowling_rating + p.ratings.death_overs_bowling)]
 
     i1 = InningsSim(rng, first, second, no, super_over=True, order=order(first), bowlers=bowler(second)).run()
     i2 = InningsSim(rng, second, first, no + 1, super_over=True, target=i1.runs + 1, order=order(second),
                     bowlers=bowler(first)).run()
-    for l in i1.bat_lines + i2.bat_lines:
-        if l.out:
-            used_bat.add(l.player.id)
-    for b in i1.bowl_lines + i2.bowl_lines:
-        used_bowl.add(b.player.id)
+    # keyed by (team, player): the same cricketer can be in both squads
+    for inn, sq in ((i1, first), (i2, second)):
+        for l in inn.bat_lines:
+            if l.out:
+                used_bat.add((sq.team_id, l.player.id))
+    for inn, sq in ((i1, second), (i2, first)):
+        for b in inn.bowl_lines:
+            used_bowl.add((sq.team_id, b.player.id))
     return i1, i2
 
 
@@ -417,13 +423,13 @@ def simulate_match(sq_a: Squad, sq_b: Squad, rng: random.Random, *, seed: str = 
 
 
 # ───────────────────────── Player of the Match / best bowler ─────────────────────────
-def impact(innings: list[InningsResult], winner_team: int) -> dict[str, float]:
+def impact(innings: list[InningsResult], winner_team: int) -> dict[tuple[int, str], float]:
     """Documented performance score, computed ONLY from the simulated scorecard:
        batting  runs + fours + 2*sixes  (+ strike-rate bonus 0.1*(SR-130) when 15+ runs; x1.15 in a successful chase)
        bowling  25*wickets + 8*maidens + economy bonus 3*(8.5-econ) per 2+ overs
        fielding 8 per catch/run-out, 10 per stumping      pressure  +0.3/run and +6/wicket in overs 17-20
        players of the losing side count at 85% (a POM from the losing team needs a much bigger performance)."""
-    pts: dict[str, float] = {}
+    pts: dict[tuple[int, str], float] = {}          # keyed by (team_id, player_id): a cricketer may play for BOTH sides
     chase_win = len(innings) > 1 and innings[1].batting.team_id == winner_team and innings[1].runs > innings[0].runs
     for inn in innings:
         for l in inn.bat_lines:
@@ -435,30 +441,33 @@ def impact(innings: list[InningsResult], winner_team: int) -> dict[str, float]:
             if chase_win and inn.batting.team_id == winner_team:
                 p *= 1.15
             p += 0.3 * inn.death_runs.get(l.player.id, 0)
-            pts[l.player.id] = pts.get(l.player.id, 0) + p
+            k = (inn.batting.team_id, l.player.id)
+            pts[k] = pts.get(k, 0) + p
+            fk = (inn.bowling.team_id, l.fielder_id)
             if l.out and l.fielder_id and l.dismissal in ("caught", "run out"):
-                pts[l.fielder_id] = pts.get(l.fielder_id, 0) + 8
+                pts[fk] = pts.get(fk, 0) + 8
             if l.out and l.fielder_id and l.dismissal == "stumped":
-                pts[l.fielder_id] = pts.get(l.fielder_id, 0) + 10
+                pts[fk] = pts.get(fk, 0) + 10
         for b in inn.bowl_lines:
             p = 25 * b.wickets + 8 * b.maidens + 6 * inn.death_wkts.get(b.player.id, 0)
             if b.balls >= 12:
                 p += 3 * (8.5 - b.runs * 6 / b.balls) * (b.balls / 24)
-            pts[b.player.id] = pts.get(b.player.id, 0) + p
+            k = (inn.bowling.team_id, b.player.id)
+            pts[k] = pts.get(k, 0) + p
     return pts
 
 
-def _awards(innings: list[InningsResult], winner_team: int) -> tuple[str, str]:
+def _awards(innings: list[InningsResult], winner_team: int) -> tuple[tuple[int, str], tuple[int, str] | None]:
+    """Returns ((team_id, player_id) of the Player of the Match, (team_id, player_id) of the best bowler)."""
     pts = impact(innings, winner_team)
-    team_of = {p.id: s.team_id for inn in innings for s in (inn.batting, inn.bowling) for p in s.players}
-    adj = {pid: v * (1.0 if team_of[pid] == winner_team else 0.85) for pid, v in pts.items()}
-    pom = max(adj, key=lambda k: (adj[k], k))
+    adj = {k: v * (1.0 if k[0] == winner_team else 0.85) for k, v in pts.items()}
+    pom = max(adj, key=lambda k: (adj[k], k[1], k[0]))
     best, key = None, None
     for inn in innings:
         for b in inn.bowl_lines:
-            k = (b.wickets, -b.runs, b.balls, b.player.id)
+            k = (b.wickets, -b.runs, b.balls, b.player.id, inn.bowling.team_id)
             if key is None or k > key:
-                best, key = b.player.id, k
+                best, key = (inn.bowling.team_id, b.player.id), k
     return pom, best
 
 
@@ -485,5 +494,8 @@ def to_payload(m: MatchOutcome, *, store_balls: bool = True) -> dict[str, Any]:
     }
     return {"team1_id": m.team1.team_id, "team2_id": m.team2.team_id, "toss_winner_id": m.toss_winner,
             "toss_decision": m.toss_decision, "winner_team_id": m.winner, "result_type": m.result_type,
-            "margin": m.margin, "super_overs": m.super_overs, "pom_player_id": m.pom, "best_bowler_id": m.best_bowler,
+            "margin": m.margin, "super_overs": m.super_overs,
+            "pom_player_id": m.pom[1] if m.pom else None, "pom_team_id": m.pom[0] if m.pom else None,
+            "best_bowler_id": m.best_bowler[1] if m.best_bowler else None,
+            "best_bowler_team_id": m.best_bowler[0] if m.best_bowler else None,
             "summary": m.summary, "seed": m.seed, "innings": innings, "nrr": nrr}

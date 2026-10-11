@@ -134,11 +134,11 @@ def test_awards_pick_the_right_players_and_ties_are_deterministic():
 
 
 # ───────────── draft engine / pool ─────────────
-def test_required_pool_formula_covers_13_teams_and_reservations():
-    assert draft_engine.required_pool(8, 0) == 21 * 8 == 168
-    assert draft_engine.required_pool(8, 0) == max((8 + draft_engine.SYSTEM_TEAMS) * 11, 21 * 8)
-    assert draft_engine.required_pool(2, 20) == 7 * 11 + 20
-    assert draft_engine.required_pool(8, 20) == 168 + 20
+def test_required_pool_formula_for_cross_team_drafting():
+    # a cricketer may be in several squads: a team needs its 10 owned + 11 offered cards = 21 distinct players, any team count
+    for humans in range(2, 9):
+        assert draft_engine.required_pool(humans, 0) == 21
+        assert draft_engine.required_pool(humans, 20) == 41
 
 
 def test_auto_pick_uses_only_public_info_and_builds_balanced_squads():
@@ -237,7 +237,9 @@ def test_match_scorecard_invariants_over_many_matches():
             assert i1.runs == i2.runs and out.super_overs >= 1
         assert len({p for p in (l.player.id for l in main[0].bat_lines)}) == 11
         pl = {p.id for p in a.players} | {p.id for p in b.players}
-        assert out.pom in pl and out.best_bowler in pl
+        teams = {a.team_id, b.team_id}
+        assert out.pom[0] in teams and out.pom[1] in pl, out.pom           # (team_id, player_id): same cricketer may be on both sides
+        assert out.best_bowler[0] in teams and out.best_bowler[1] in pl
 
 
 def test_match_is_deterministic_for_the_same_seed_and_varies_otherwise():

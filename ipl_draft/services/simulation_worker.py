@@ -21,7 +21,7 @@ from ..engine.match_engine import simulate_match, to_payload
 from ..engine.model import Squad
 from ..engine.playoffs import STATE_FOR_STAGE
 from ..engine.standings import rank_teams
-from ..engine.team_builder import franchise_payload
+from ..engine.team_builder import FRANCHISES
 from ..runtime import IplRuntime
 from . import batting_order_service, draft_service, notification_service as notify, system_service
 
@@ -83,23 +83,23 @@ async def advance(rt: IplRuntime, tid: int) -> None:
 
 # ───────────────────────── state handlers (return True = made progress, loop again) ─────────────────────────
 async def _drafting(rt: IplRuntime, t: dict) -> bool:
-    # Ensure system teams are created, drafted, and ready to go
-    await system_service.prepare_system_teams(rt, t["id"])
-    prog = await rt.repo.draft_progress(t["id"])
+    """Waits (returns False) until every human has drafted AND confirmed a batting order and the AI franchises are
+    complete; then makes the one explicit DRAFTING -> SYSTEM_TEAM_GENERATION step in the database.
+    (Regression: this handler used to return True forever without changing the state, so tournaments sat in DRAFTING.)"""
+    tid = t["id"]
+    prog = await rt.repo.draft_progress(tid)
     if not prog or not all(p["done"] for p in prog):
         return False
-    # Ensure all human teams have confirmed their batting orders before proceeding
-    pending = await rt.repo.teams_pending_batting_order(t["id"])
-    if pending:
+    if await rt.repo.teams_pending_batting_order(tid):
         return False
-    res = await rt.repo.begin_system_teams(t["id"], franchise_payload())
-    if res.get("status") in ("OK", "ALREADY"):
+    await system_service.prepare_system_teams(rt, tid)
+    res = await rt.repo.finish_drafting(tid, len(FRANCHISES))
+    st = res.get("status")
+    if st in ("OK", "ALREADY"):
         return True
-    try:
-        await rt.repo.update(t["id"], state="SYSTEM_TEAM_GENERATION")
-        return True
-    except Exception:
-        return False
+    if st != "NOT_READY":
+        raise RuntimeError(f"finish_drafting: {res}")
+    return False
 
 
 async def _system(rt: IplRuntime, t: dict) -> bool:
@@ -107,13 +107,7 @@ async def _system(rt: IplRuntime, t: dict) -> bool:
     await system_service.prepare_system_teams(rt, tid)
     res = await rt.repo.complete_system_teams(tid)
     if res.get("status") not in ("OK", "ALREADY"):
-        try:
-            await rt.repo.update(tid, state="FIXTURE_GENERATION")
-        except Exception:
-            pass
-    # Auto-assign sensible batting order for each system franchise based on ratings
-    for s_team in [x for x in await rt.repo.all_teams(tid) if x["kind"] == "SYSTEM"]:
-        await rt.repo.batting_order_auto_assign(s_team["id"])
+        raise RuntimeError(f"complete_system_teams: {res}")           # visible to the failure counter, never forced through
     if not t.get("system_announced"):
         teams = [x for x in await rt.repo.all_teams(tid) if x["kind"] == "SYSTEM"]
         await notify.set_dashboard(rt, t, m.system_draft_text(teams), kb.teams_ready(tid))
@@ -174,7 +168,7 @@ async def _simulate(rt: IplRuntime, t: dict, fx: dict, squads: dict[int, Squad])
                 mid = dm_msgs.get(h["user_id"])
                 if mid:
                     await notify.edit_dm(rt, h["user_id"], mid, progress_text)
-            await asyncio.sleep(0.8)
+            await rt.pause(0.8)
         except Exception:  # noqa: BLE001
             pass
 

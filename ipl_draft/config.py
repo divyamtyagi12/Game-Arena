@@ -38,6 +38,7 @@ class IplSettings:
     pool_margin: int = 20                   # spare players required on top of the capacity formula
     seed_salt: str = ""                     # optional extra entropy for match seeds
     max_failures: int = 5                   # consecutive worker errors before FAILED_RECOVERABLE
+    batting_order_seconds: int = 300        # time a manager has to confirm the batting order (persisted deadline)
     enabled: bool = True
 
     @classmethod
@@ -56,5 +57,6 @@ class IplSettings:
             pool_margin=_int("IPL_POOL_MARGIN", 20, 0, 200),
             seed_salt=os.getenv("IPL_SEED_SALT", "").strip(),
             max_failures=_int("IPL_MAX_FAILURES", 5, 1, 50),
+            batting_order_seconds=_int("IPL_BATTING_ORDER_SECONDS", 300, 10, 3600),
             enabled=os.getenv("IPL_ENABLED", "true").strip().lower() not in ("0", "false", "no"),
         )

@@ -13,8 +13,9 @@ SYSTEM_TEAMS = 5
 
 
 def required_pool(humans: int, margin: int = 20) -> int:
-    """Mirror of SQL ipl_required_pool: final rosters, and the worst moment of simultaneous 11-card reservations."""
-    return max((humans + SYSTEM_TEAMS) * SQUAD, 21 * humans) + margin
+    """Mirror of SQL ipl_required_pool (v3). Cricketers may sit in several squads, so a team only needs 10 owned players
+    plus 11 fresh offer cards = 21 distinct cricketers in the pool, whatever the number of teams."""
+    return 21 + margin
 
 
 def can_bowl(p: Mapping) -> bool:

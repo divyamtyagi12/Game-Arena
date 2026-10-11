@@ -119,7 +119,7 @@ def draft_complete_text(team: Mapping, players: Sequence[Mapping]) -> str:
     return (f"🏆 <b>IPL DRAFT COMPLETE!</b>\n\n👑 YOUR SQUAD: <b>{esc(team['name'].upper())}</b>\n\n{rows}\n\n{LINE}\n\n"
             "✅ SQUAD COMPLETE: <b>11/11</b>\n\n"
             "🏏 <b>NEXT STEP:</b> Set your batting order!\n"
-            "Use the buttons below to choose who bats 1st, 2nd, 3rd… and so on.")
+            "Your batting-order screen is the next message — choose who bats 1st, 2nd, 3rd… and so on.")
 
 
 
@@ -444,7 +444,10 @@ def batting_order_timeout_text(players: Sequence[Mapping]) -> str:
 # ───────────────────────── DM match results ─────────────────────────
 def dm_match_result(card: Mapping, your_team_id: int) -> str:
     """Short DM card shown to a human manager after their team's match."""
-    h, a = card.get("home_team") or {}, card.get("away_team") or {}
+    # ipl_match_card returns team1 (batted first) / team2; "home_team"/"away_team" are accepted for older callers.
+    # (Regression: only home/away were read, so every DM card showed "? vs ?" with "?" score lines.)
+    h = card.get("team1") or card.get("home_team") or {}
+    a = card.get("team2") or card.get("away_team") or {}
     you = h if h.get("id") == your_team_id else a
     opp = a if h.get("id") == your_team_id else h
     inn = card.get("innings") or []

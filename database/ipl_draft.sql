@@ -198,6 +198,14 @@ create table if not exists ipl_team_rosters (
 );
 create index if not exists idx_ipl_roster_team on ipl_team_rosters (team_id);
 
+-- batting-order columns live in the base file too (they used to arrive only with migration_ipl_v2.sql, so a fresh
+-- deploy of this file alone failed on ipl_engine_squads and the Python layer silently fell back to in-memory state)
+alter table ipl_team_rosters      add column if not exists batting_order smallint check (batting_order between 1 and 11);
+alter table ipl_tournament_teams  add column if not exists batting_order_confirmed boolean not null default false;
+alter table ipl_tournament_teams  add column if not exists batting_order_deadline_at timestamptz;
+alter table ipl_tournament_teams  add column if not exists batting_order_message_id bigint;
+alter table ipl_tournament_teams  add column if not exists batting_order_prompted_at timestamptz;
+
 -- ───────────────────────── drafting ─────────────────────────
 create table if not exists ipl_draft_offers (
   id               bigint generated always as identity primary key,
@@ -469,9 +477,9 @@ language sql immutable as $$
     when p_old = 'FAILED_RECOVERABLE' then p_new in ('DRAFTING','SYSTEM_TEAM_GENERATION','FIXTURE_GENERATION',
          'LEAGUE_RUNNING','LEAGUE_COMPLETED','PLAYOFF_ELIMINATOR','PLAYOFF_QUALIFIER_1',
          'PLAYOFF_QUALIFIER_2','PLAYOFF_FINAL')
-    when p_old = 'LOBBY'                  then p_new in ('DRAFTING', 'SYSTEM_TEAM_GENERATION')
-    when p_old = 'SYSTEM_TEAM_GENERATION' then p_new in ('DRAFTING', 'FIXTURE_GENERATION')
-    when p_old = 'DRAFTING'               then p_new in ('SYSTEM_TEAM_GENERATION', 'FIXTURE_GENERATION')
+    when p_old = 'LOBBY'                  then p_new = 'DRAFTING'
+    when p_old = 'DRAFTING'               then p_new = 'SYSTEM_TEAM_GENERATION'
+    when p_old = 'SYSTEM_TEAM_GENERATION' then p_new = 'FIXTURE_GENERATION'
     when p_old = 'FIXTURE_GENERATION'     then p_new = 'LEAGUE_RUNNING'
     when p_old = 'LEAGUE_RUNNING'         then p_new = 'LEAGUE_COMPLETED'
     when p_old = 'LEAGUE_COMPLETED'       then p_new = 'PLAYOFF_ELIMINATOR'

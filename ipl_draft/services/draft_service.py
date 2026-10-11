@@ -17,12 +17,19 @@ PROGRESS_MIN_GAP = 8.0       # seconds between edits of the group progress messa
 
 # ───────────────────────── offers ─────────────────────────
 async def kickoff(rt: IplRuntime, tid: int) -> None:
+    """Humans get their first offers immediately. The AI franchises draft from the same pool independently (a cricketer
+    may sit in several squads; only duplicates inside one XI are forbidden), so they never delay or block a human."""
+    await update_progress(rt, tid, force=True)
+    await offers_for_teams(rt, tid)
+    rt.ctx.spawn(_prepare_system(rt, tid), name=f"ipl-system-{tid}")
+
+
+async def _prepare_system(rt: IplRuntime, tid: int) -> None:
     try:
         await system_service.prepare_system_teams(rt, tid)
     except Exception:
-        log.exception("Error preparing system teams at kickoff")
-    await update_progress(rt, tid, force=True)
-    await offers_for_teams(rt, tid)
+        # not swallowed silently: the worker retries every tick and escalates through its failure counter
+        log.exception("IPL system-team preparation failed for tournament %s (will retry)", tid)
 
 
 async def offers_for_teams(rt: IplRuntime, tid: int) -> None:
@@ -92,7 +99,9 @@ async def after_pick(rt: IplRuntime, res: dict, message_id: int | None, *, auto:
         team, players = roster["team"], roster["players"]
         user_id = team["user_id"]
         if not team.get("auto_draft") or not auto:
-            await notify.edit_dm(rt, user_id, message_id, m.drafted_text(res["player"], players, auto=auto))
+            text = (m.draft_complete_text(team, players) if res["done"]
+                    else m.drafted_text(res["player"], players, auto=auto))
+            await notify.edit_dm(rt, user_id, message_id, text)
         if res["done"]:
             from . import batting_order_service
             await batting_order_service.start_batting_order_flow(rt, team, players)

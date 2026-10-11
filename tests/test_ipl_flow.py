@@ -33,20 +33,22 @@ async def _play(n_humans: int, seed: int = 3):
     tid = await h.lobby(humans)
     q = await h.force_start(tid)
     assert q.answers[-1][0].startswith("🚀"), q.answers
-    await h.draft_all(humans, seed)
+    await h.draft_all(humans, seed, tid)
+    orders = await h.set_batting_orders(tid, humans, seed)
     t = await h.run_to_end(tid)
+    h.orders = orders
     return h, tid, t, humans
 
 
 def _check_tournament(h, tid: int, n_humans: int) -> None:
-    teams = n_humans + 8
+    teams = n_humans + 5
     n_fix = teams * (teams - 1)
     assert sql(f"select state from ipl_tournaments where id={tid}") == "COMPLETED"
-    # squads: 11 each, no duplicate players anywhere, humans + 8 franchises
+    # squads: 11 each, no duplicate players anywhere, humans + 5 franchises; a cricketer may sit in several squads but never twice in the SAME XI
     assert sql(f"select count(*) from ipl_tournament_teams where tournament_id={tid}") == str(teams)
-    assert sql(f"select count(*) from ipl_tournament_teams where tournament_id={tid} and kind='SYSTEM'") == "8"
+    assert sql(f"select count(*) from ipl_tournament_teams where tournament_id={tid} and kind='SYSTEM'") == "5"
     assert sql(f"select count(*) from ipl_team_rosters where tournament_id={tid}") == str(teams * 11)
-    assert sql(f"select count(distinct player_id) from ipl_team_rosters where tournament_id={tid}") == str(teams * 11)
+    assert sql(f"select count(distinct (team_id, player_id)) from ipl_team_rosters where tournament_id={tid}") == str(teams * 11)
     assert sql(f"select count(*) from (select team_id from ipl_team_rosters where tournament_id={tid} group by 1 having count(*)<>11) x") == "0"
     # fixtures / matches
     assert sql(f"select count(*) from ipl_fixtures where tournament_id={tid} and stage='LEAGUE'") == str(n_fix)
@@ -113,27 +115,29 @@ def _check_tournament(h, tid: int, n_humans: int) -> None:
     assert "rating" not in blob
 
 
-def test_full_16_team_tournament_8_humans():
+def test_full_13_team_tournament_8_humans():
     _need_db()
     h, tid, t, humans = run(_play(8))
     _check_tournament(h, tid, 8)
-    assert sql(f"select count(*) from ipl_fixtures where tournament_id={tid} and stage='LEAGUE'") == "240"
+    assert sql(f"select count(*) from ipl_fixtures where tournament_id={tid} and stage='LEAGUE'") == "156"
     # group experience: exactly one dashboard message edited in place; compact matchday summaries only
     dash = sql(f"select dashboard_message_id from ipl_tournaments where id={tid}")
     assert dash
     group_msgs = [m for m in h.ctx.bot.sent if m.chat_id == GROUP]
-    assert len(group_msgs) < 80, f"group spam: {len(group_msgs)} messages for 244 matches"
+    assert len(group_msgs) < 80, f"group spam: {len(group_msgs)} messages for 160 matches"
     assert h.ctx.bot.edits > 20
     # every human got their squad DM and a final result DM
     for u in humans:
-        assert any("DRAFT COMPLETE" in x for x in h.ctx.bot.texts(u))
+        # the squad card is delivered by EDITING the last offer message, so read the current message contents
+        current = [m.text for (chat, _), m in h.ctx.bot.messages.items() if chat == u]
+        assert any("DRAFT COMPLETE" in x for x in current), current[-3:]
 
 
 def test_odd_team_count_three_humans_has_byes_and_completes():
     _need_db()
     h, tid, t, humans = run(_play(3))
-    _check_tournament(h, tid, 3)                        # 11 teams → 110 fixtures, 20 matches each
-    assert sql(f"select count(*) from ipl_fixtures where tournament_id={tid} and stage='LEAGUE'") == "110"
+    _check_tournament(h, tid, 3)                        # 8 teams → 56 fixtures
+    assert sql(f"select count(*) from ipl_fixtures where tournament_id={tid} and stage='LEAGUE'") == "56"
 
 
 def test_two_humans_minimum_and_recorded_group_history():

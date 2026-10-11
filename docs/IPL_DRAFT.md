@@ -4,7 +4,11 @@ Third game of the arena. Anime Draft and Number Wars are untouched: no existing 
 (only additive hooks in `bot.py`, `handlers/arena|start|info|lobby|leaderboard.py`, `utils/messages.py`).
 
 ## Deploy
-1. Supabase SQL editor: `database/schema.sql`, `database/number_wars.sql`, then **`database/ipl_draft.sql`** (re-runnable).
+1. Supabase SQL editor, in this order (all re-runnable): `database/schema.sql`, `database/number_wars.sql`, `database/ipl_draft.sql`,
+   `database/migration_ipl_v2.sql`, then **`database/migration_ipl_v3.sql`** (must be last).
+   **Before upgrading an existing deployment run `database/backup_ipl_tables.sql`** (non-destructive: copies every IPL table into a new
+   `ipl_backup_<timestamp>` schema and verifies row counts) or `scripts/backup_ipl_tables.sh` (pg_dump). Nothing in v3 drops or deletes data;
+   removing an old backup schema is left to the owner.
    Without the third file the bot still runs; IPL is disabled and an error is logged.
 2. Load players (see below) — `python -m scripts.import_ipl_players --seed` and/or `--cricsheet ipl_json.zip`.
 3. Start the bot as before. No new secrets: IPL uses the existing `SUPABASE_URL`/`SUPABASE_KEY` (service role) and bot token.
@@ -77,3 +81,14 @@ Seed data is unverified and has no stats; real import untested on the real archi
 bowlers (defaults to pace, reported); handlers were verified against fakes, not the real python-telegram-bot or Telegram;
 no live load test against Supabase (RPC round-trips ≈ 1 per DB call; a 16-team tournament is ≈ a few thousand calls);
 pre-existing leaderboard module has no IPL entry besides the new button; ratings are statistical estimates, not truth.
+
+
+## v3 rules (cross-team drafting, batting orders)
+* A cricketer may be in several squads of one tournament (human or AI). Duplicates are forbidden only inside the same XI
+  (`unique (team_id, player_id)`). Statistics, awards and Player-of-the-Match are keyed by tournament + team + player.
+* Humans start drafting immediately; the five AI franchises draft independently. DRAFTING ends only through `ipl_finish_drafting`
+  (all humans drafted + batting order confirmed + AI squads complete).
+* Batting order lives entirely in the database (picks, confirmation, persisted deadline `IPL_BATTING_ORDER_SECONDS`, default 300).
+  After a restart the worker re-sends a lost prompt and auto-completes expired orders (keeping the manager's partial picks).
+  The match engine uses exactly the confirmed order.
+* `python -m scripts.verify_ipl_2026` prints pool coverage against the collected 2026 squad evidence. It never marks anything verified.

@@ -56,7 +56,8 @@ class Squad:
     team_id: int
     name: str
     short_name: str
-    players: tuple[Player, ...]    # exactly 11
+    players: tuple[Player, ...]    # exactly 11 (in confirmed batting order when `ordered`)
+    ordered: bool = False          # True = the manager's confirmed batting order is in `players`; engine must not re-sort
 
     def __post_init__(self) -> None:
         if len(self.players) != 11:
@@ -66,9 +67,14 @@ class Squad:
 
     @classmethod
     def from_rpc(cls, row: Mapping[str, Any]) -> "Squad":
+        rows = list(row["players"])
+        ordered = bool(row.get("batting_order_confirmed")) and all(p.get("batting_order") for p in rows)
+        if ordered:
+            rows.sort(key=lambda p: int(p["batting_order"]))
         players = tuple(Player(id=str(p["id"]), name=p["name"], role=p["role"],
                                bowling_type=p.get("bowling_type") or "NONE",
                                batting_style=p.get("batting_style"),
                                ratings=Ratings.from_mapping(p.get("ratings")))
-                        for p in row["players"])
-        return cls(team_id=int(row["team_id"]), name=row["name"], short_name=row["short_name"], players=players)
+                        for p in rows)
+        return cls(team_id=int(row["team_id"]), name=row["name"], short_name=row["short_name"], players=players,
+                   ordered=ordered)

@@ -95,18 +95,46 @@ class Harness:
         q = await self.click(f"ipl:cf:{offer}:{pos}", uid, chat=fakes.FakeChat(uid, "private"), message_id=m.message_id)
         return bool(q.answers) and q.answers[-1][0] == "✅ Player drafted!"
 
-    async def draft_all(self, humans: list[int], seed: int = 3) -> None:
+    async def humans_unfinished(self, tid: int) -> int:
+        return int(pgdb.run_sql(f"select count(*) from ipl_tournament_teams where tournament_id = {tid} and kind = 'HUMAN' and not squad_complete"))
+
+    async def draft_all(self, humans: list[int], seed: int = 3, tid: int | None = None, timeout: float = 180) -> None:
+        """Scripted managers pick until every human squad is complete (waits for offers instead of guessing a round count)."""
         rng = random.Random(seed)
-        for _ in range(11 * len(humans) * 3):
+        if tid is None:
+            tid = int(pgdb.run_sql("select max(id) from ipl_tournaments"))
+        deadline = asyncio.get_event_loop().time() + timeout
+        while await self.humans_unfinished(tid):
+            if asyncio.get_event_loop().time() > deadline:
+                raise TimeoutError("human draft did not finish")
             progressed = False
             for u in humans:
                 progressed |= await self.human_picks(u, rng)
-            await asyncio.sleep(0)
-            if not progressed:
-                row = pgdb.run_sql("select count(*) from ipl_tournaments where state = 'DRAFTING'")
-                if row == "0":
-                    break
-                await asyncio.sleep(0.05)
+            await asyncio.sleep(0 if progressed else 0.05)
+
+    async def set_batting_orders(self, tid: int, humans: list[int], seed: int = 5, confirm: bool = True) -> dict[int, list[str]]:
+        """Each human sets a (random) batting order through the real callbacks. Returns {user_id: [player names in order]}."""
+        rng = random.Random(seed)
+        out: dict[int, list[str]] = {}
+        for u in humans:
+            team = await self.rt.repo.team_of_user(tid, u)
+            dm = fakes.FakeChat(u, "private")
+            order = list(range(1, 12))
+            rng.shuffle(order)
+            for pos in order:
+                await self.click(f"ipl:bop:{team['id']}:{pos}", u, chat=dm)
+            if confirm:
+                q = await self.click(f"ipl:boc:{team['id']}", u, chat=dm)
+                assert q.answers and q.answers[-1][0] == "✅ Lineup confirmed!", q.answers
+            state = await self.rt.repo.get_batting_order_state(team["id"])
+            out[u] = [p["name"] for p in state["ordered"]]
+        return out
+
+    def restart(self) -> None:
+        """Simulates a bot restart: brand-new runtime/caches on the SAME database and the same Telegram."""
+        self.rt = IplRuntime.create(self.ctx, self.rt.s)
+        self.rt.sleep = _nosleep
+        self.context.bot_data["ipl"] = self.rt
 
     async def run_to_end(self, tid: int, timeout: float = 600) -> dict:
         deadline = asyncio.get_event_loop().time() + timeout

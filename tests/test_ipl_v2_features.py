@@ -5,8 +5,8 @@
 4. Match simulation follows saved batting order.
 5. DM match card formatting and buttons.
 """
+import asyncio
 import random
-import pytest
 
 from ipl_draft.engine import draft_engine
 from ipl_draft.engine.match_engine import InningsSim, simulate_match
@@ -115,8 +115,8 @@ def test_dm_match_result_and_buttons():
     card = {
         "match_id": 999,
         "stage": "LEAGUE",
-        "home_team": {"id": 10, "name": "Mumbai Indians", "short_name": "MI"},
-        "away_team": {"id": 20, "name": "Chennai Super Kings", "short_name": "CSK"},
+        "team1": {"id": 10, "name": "Mumbai Indians", "short_name": "MI"},
+        "team2": {"id": 20, "name": "Chennai Super Kings", "short_name": "CSK"},
         "winner_team_id": 10,
         "summary": "Mumbai Indians won by 15 runs",
         "innings": [
@@ -149,8 +149,7 @@ def test_dm_match_result_and_buttons():
     assert "ipl:ts:1" in button_callbacks
 
 
-@pytest.mark.asyncio
-async def test_system_draft_ready_before_user_draft():
+def test_system_draft_ready_before_user_draft():
     """Verify that system franchises are prepared and drafted before user draft."""
     from unittest.mock import AsyncMock, MagicMock
     from ipl_draft.services import system_service
@@ -171,24 +170,22 @@ async def test_system_draft_ready_before_user_draft():
     rt.repo.complete_system_teams = AsyncMock(return_value={"status": "OK"})
     rt.repo.batting_order_auto_assign = AsyncMock(return_value=None)
 
-    await system_service.prepare_system_teams(rt, 10)
+    rt.ctx.lock = lambda key: __import__("contextlib").AsyncExitStack()
+    asyncio.run(system_service.prepare_system_teams(rt, 10))
     assert rt.repo.complete_system_teams.called
     assert rt.repo.batting_order_auto_assign.call_count == 5
 
 
-@pytest.mark.asyncio
-async def test_create_fixtures_fallback_on_bad_team_count():
-    """Verify that repository.create_fixtures uses fallback when RPC returns BAD_TEAM_COUNT."""
+def test_create_fixtures_never_bypasses_the_validated_sql_function():
+    """The old direct-insert fallback (which skipped all validation and did not work on PostgREST) is gone: a bad
+    result is returned/raised so the worker's failure counter sees it."""
     from unittest.mock import AsyncMock, MagicMock
     from ipl_draft.repository import IplRepo
 
     db = MagicMock()
-    db.rpc = AsyncMock(return_value={"status": "BAD_TEAM_COUNT", "teams": 7})
+    db.rpc = AsyncMock(return_value={"status": "BAD_TEAM_COUNT", "teams": 5})
     db.exec = AsyncMock(return_value=[])
     repo = IplRepo(db)
-    repo.all_teams = AsyncMock(return_value=[{"id": i} for i in range(1, 8)])
-
-    fixtures = [{"match_no": 1, "matchday": 1, "leg": 1, "home": 1, "away": 2}]
-    res = await repo.create_fixtures(10, fixtures)
-    assert res.get("status") == "OK"
-    assert res.get("fallback") is True
+    res = asyncio.run(repo.create_fixtures(10, [{"match_no": 1, "matchday": 1, "leg": 1, "home": 1, "away": 2}]))
+    assert res["status"] == "BAD_TEAM_COUNT"
+    db.exec.assert_not_called()

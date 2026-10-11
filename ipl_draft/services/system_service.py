@@ -49,112 +49,20 @@ async def run_system_draft(rt: IplRuntime, tid: int) -> None:
             picks[team_id] += 1
 
 
-async def direct_system_draft_fallback(rt: IplRuntime, tid: int) -> None:
-    """Directly fills system teams with balanced squads if RPC cannot pick."""
-    teams = await rt.repo.all_teams(tid)
-    sys_teams = [x for x in teams if x["kind"] == "SYSTEM"]
-    if not sys_teams:
-        return
-
-    taken_res = await rt.repo.db.exec(
-        lambda c: c.table("ipl_team_rosters").select("player_id").eq("tournament_id", tid)
-    )
-    taken_ids = {r["player_id"] for r in (taken_res or [])}
-
-    pool_res = await rt.repo.db.exec(
-        lambda c: c.table("ipl_tournament_pool")
-        .select("player_id, ipl_players(id, display_name, role, bowling_type, batting_style)")
-        .eq("tournament_id", tid)
-    )
-    available: list[dict] = []
-    for row in (pool_res or []):
-        pid = row["player_id"]
-        if pid not in taken_ids and row.get("ipl_players"):
-            p = row["ipl_players"]
-            available.append({
-                "id": pid,
-                "role": p.get("role", "BAT"),
-                "bowling_type": p.get("bowling_type"),
-                "batting_style": p.get("batting_style"),
-            })
-
-    by_role: dict[str, list[dict]] = {"WK": [], "BAT": [], "AR": [], "BOWL": []}
-    for p in available:
-        by_role.setdefault(p["role"], []).append(p)
-
-    for tm in sys_teams:
-        existing = await rt.repo.db.exec(
-            lambda c, t_id=tm["id"]: c.table("ipl_team_rosters").select("slot, player_id").eq("team_id", t_id)
-        )
-        existing_slots = {r["slot"] for r in (existing or [])}
-        if len(existing_slots) >= 11:
-            continue
-
-        needed_slots = [s for s in range(1, 12) if s not in existing_slots]
-        composition = ["WK"] + ["BAT"] * 4 + ["AR"] * 2 + ["BOWL"] * 4
-        roster_inserts = []
-        for slot in needed_slots:
-            target_role = composition[slot - 1] if slot <= len(composition) else "BAT"
-            candidate = None
-            if by_role.get(target_role):
-                candidate = by_role[target_role].pop(0)
-            else:
-                for alt_role in ["BAT", "AR", "BOWL", "WK"]:
-                    if by_role.get(alt_role):
-                        candidate = by_role[alt_role].pop(0)
-                        break
-            if candidate:
-                taken_ids.add(candidate["id"])
-                roster_inserts.append({
-                    "tournament_id": tid,
-                    "team_id": tm["id"],
-                    "player_id": candidate["id"],
-                    "slot": slot,
-                    "source": "SYSTEM",
-                    "batting_order": slot,
-                })
-
-        if roster_inserts:
-            await rt.repo.db.exec(lambda c: c.table("ipl_team_rosters").insert(roster_inserts))
-
-        await rt.repo.db.exec(
-            lambda c, t_id=tm["id"]: c.table("ipl_tournament_teams")
-            .update({"squad_complete": True, "batting_order_confirmed": True})
-            .eq("id", t_id)
-        )
-
-
 async def prepare_system_teams(rt: IplRuntime, tid: int) -> None:
-    """Ensure all 5 system franchises are created, drafted, and ready to go before user draft."""
+    """Idempotent: make sure the AI franchises exist, are fully drafted and have a batting order.
+    Errors propagate (no hidden fallback) so the worker's failure counter and logs show the real problem."""
     t = await rt.repo.get(tid)
-    if not t or t["state"] in ("COMPLETED", "CANCELLED"):
+    if not t or t["state"] in ("COMPLETED", "CANCELLED", "LOBBY"):
         return
-
-    # 1. Ensure the 5 system franchises exist
     teams = await rt.repo.all_teams(tid)
-    system_teams = [x for x in teams if x["kind"] == "SYSTEM"]
-    if len(system_teams) < len(FRANCHISES):
+    if sum(1 for x in teams if x["kind"] == "SYSTEM") < len(FRANCHISES):
         await rt.repo.begin_system_teams(tid, franchise_payload())
-        system_teams = [x for x in await rt.repo.all_teams(tid) if x["kind"] == "SYSTEM"]
-
-    # 2. Complete draft for any system franchise that needs picks
     prog = await rt.repo.system_progress(tid)
     if not prog or any(p.get("picks", 0) < 11 or not p.get("done") for p in prog):
-        try:
+        async with rt.ctx.lock(("ipl-system-draft", tid)):          # one system draft at a time per tournament
             await run_system_draft(rt, tid)
-        except Exception as exc:
-            log.warning("run_system_draft failed (%s); using direct fallback", exc)
-            await direct_system_draft_fallback(rt, tid)
-
-    # 3. Mark complete
-    try:
-        await rt.repo.complete_system_teams(tid)
-    except Exception:
-        pass
-
-    # 4. Auto-assign batting order for each franchise
-    for s_team in [x for x in await rt.repo.all_teams(tid) if x["kind"] == "SYSTEM"]:
-        try:
+    await rt.repo.complete_system_teams(tid)
+    for s_team in await rt.repo.all_teams(tid):
+        if s_team["kind"] == "SYSTEM" and not s_team.get("batting_order_confirmed"):
             await rt.repo.batting_order_auto_assign(s_team["id"])
-        except Exception:
-            pass

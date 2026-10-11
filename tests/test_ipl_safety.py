@@ -115,7 +115,7 @@ def test_pool_too_small_blocks_start_without_changing_state():
         Harness.reset_db()
         await h.ensure_players()
         tid = await h.lobby([1, 2, 3])
-        sql("update ipl_players set is_eligible = false where id in (select id from ipl_players order by slug offset 60)")
+        sql("update ipl_players set is_eligible = false where id in (select id from ipl_players order by slug offset 30)")
         try:
             q = await h.force_start(tid)
         finally:
@@ -127,28 +127,27 @@ def test_pool_too_small_blocks_start_without_changing_state():
 
 
 # ───────────── draft: exclusivity, atomicity, security ─────────────
-def test_offers_are_exclusive_and_pick_releases_the_other_ten():
+def test_offers_may_overlap_across_teams_but_never_repeat_inside_one_xi():
+    """Cross-team drafting: two managers may be offered / pick the SAME cricketer; nobody gets a duplicate inside their own XI."""
     _need_db()
 
     async def go():
         h, tid, humans = await _started(8)
         assert sql(f"select count(*) from ipl_draft_offers where tournament_id={tid} and status='OPEN'") == "8"
-        assert sql(f"select count(*), count(distinct player_id) from ipl_player_reservations where tournament_id={tid}") == "88|88"
         assert sql(f"select count(*) from (select offer_id from ipl_draft_offer_candidates group by 1 having count(*)<>11) x") == "0"
-        # the DB itself forbids reserving a player for two offers
-        _expect_pg_error("23505", f"""insert into ipl_player_reservations (tournament_id, player_id, team_id, offer_id, expires_at)
-            select tournament_id, player_id, team_id, offer_id, now() from ipl_player_reservations where tournament_id={tid} limit 1""")
+        assert sql(f"select count(*) from ipl_player_reservations where tournament_id={tid}") == "0"      # no cross-team locking any more
         rng = random.Random(1)
-        assert await h.human_picks(1, rng)
-        assert sql(f"select count(*) from ipl_player_reservations where tournament_id={tid}") == "88"   # 10 released + 11 new for round 2
-        # picked player is never offered to anyone again
-        picked = sql(f"select player_id from ipl_team_rosters where tournament_id={tid}")
-        assert sql(f"select count(*) from ipl_draft_offer_candidates c join ipl_draft_offers o on o.id=c.offer_id where o.status='OPEN' and o.tournament_id={tid} and c.player_id='{picked}'") == "0"
-        # the released ten can be offered to others later, never to two open offers at once
-        for _ in range(10):
+        for _ in range(11):
             for u in humans:
                 await h.human_picks(u, rng)
-            assert sql(f"select count(*) from (select player_id from ipl_player_reservations where tournament_id={tid} group by 1 having count(*)>1) x") == "0"
+            # an open offer never contains a cricketer the manager already owns
+            assert sql(f"""select count(*) from ipl_draft_offer_candidates c join ipl_draft_offers o on o.id=c.offer_id
+                           join ipl_team_rosters r on r.team_id=o.team_id and r.player_id=c.player_id where o.status='OPEN'""") == "0"
+        await h.ctx.drain()
+        assert sql(f"select count(*) from (select team_id, player_id from ipl_team_rosters where tournament_id={tid} group by 1,2 having count(*)>1) x") == "0"
+        # the database itself forbids a duplicate inside one XI
+        _expect_pg_error("23505", f"""insert into ipl_team_rosters (tournament_id, team_id, player_id, slot, source)
+            select tournament_id, team_id, player_id, 11, 'DRAFT' from ipl_team_rosters where tournament_id={tid} limit 1""")
     run(go())
 
 
@@ -179,7 +178,7 @@ def test_wrong_user_stale_forged_and_cross_tournament_callbacks():
         for data in (pk, f"ipl:cf:{offer}:1", f"ipl:bk:{offer}"):
             q = await h.click(data, 2, chat=dm2)                                       # user 2 presses user 1's buttons
             assert q.answers[-1][1] and "aren't yours" in q.answers[-1][0], (data, q.answers)
-        assert sql(f"select count(*) from ipl_draft_picks where tournament_id={tid}") == "0"
+        assert sql(f"select count(*) from ipl_draft_picks where tournament_id={tid} and team_id in (select id from ipl_tournament_teams where tournament_id={tid} and kind='HUMAN')") == "0"
         # user 2 cannot read user 1's squad
         team1 = sql(f"select id from ipl_tournament_teams where tournament_id={tid} and user_id=1")
         q = await h.click(f"ipl:tm:{team1}", 2, chat=dm2)
@@ -189,7 +188,7 @@ def test_wrong_user_stale_forged_and_cross_tournament_callbacks():
                     "ipl:j:abc", "ipl:fx:1:-5", "ipl:lb:x:0", "ipl:sc:0:0"):
             q = await h.click(bad, 1, chat=fakes.FakeChat(1, "private"))
             assert q.answers and q.answers[-1][0], bad
-        assert sql(f"select count(*) from ipl_draft_picks where tournament_id={tid}") == "0"
+        assert sql(f"select count(*) from ipl_draft_picks where tournament_id={tid} and team_id in (select id from ipl_tournament_teams where tournament_id={tid} and kind='HUMAN')") == "0"
         # bad position on the real offer
         q = await h.click(f"ipl:cf:{offer}:12", 1, chat=fakes.FakeChat(1, "private"))
         assert q.answers[-1][1]
@@ -247,7 +246,8 @@ def test_dm_failure_during_draft_switches_that_team_to_auto_draft():
         for _ in range(14):
             await draft_service.draft_tick(h.rt)
         assert sql(f"select count(*) from ipl_team_rosters where tournament_id={tid} and team_id=(select id from ipl_tournament_teams where tournament_id={tid} and user_id=2)") == "11"
-        await h.draft_all([1])
+        await h.draft_all([1], tid=tid)
+        await h.set_batting_orders(tid, [1])
         t = await h.run_to_end(tid)
         assert t["state"] == "COMPLETED"
     run(go())
@@ -320,11 +320,14 @@ def test_two_groups_run_independent_tournaments_in_parallel():
         await h.force_start(a, 1, GROUP)
         await h.force_start(b, 3, GROUP + 1)
         await h.ctx.drain()
-        await h.draft_all([1, 2, 3, 4])
+        await h.draft_all([1, 2], tid=a)
+        await h.draft_all([3, 4], tid=b)
+        await h.set_batting_orders(a, [1, 2])
+        await h.set_batting_orders(b, [3, 4])
         ta, tb = (await h.run_to_end(a), await h.run_to_end(b))
         assert ta["state"] == tb["state"] == "COMPLETED"
         for tid in (a, b):
-            assert sql(f"select count(distinct player_id) from ipl_team_rosters where tournament_id={tid}") == "110"
+            assert sql(f"select count(distinct (team_id, player_id)) from ipl_team_rosters where tournament_id={tid}") == "77"
         assert sql("select count(*) from ipl_user_stats") == "4"
         assert sql(f"select count(*) from ipl_group_stats where group_id={GROUP}") == "2"
     run(go())
@@ -358,7 +361,8 @@ def test_crash_mid_league_resumes_without_duplicates_and_settle_is_idempotent():
 
     async def go():
         h, tid, humans = await _started(2)
-        await h.draft_all(humans)
+        await h.draft_all(humans, tid=tid)
+        await h.set_batting_orders(tid, humans)
         # run until 12+ matches exist, then "kill -9" the process in the middle of the league (BaseException = no cleanup)
         class Crash(BaseException):
             pass
@@ -395,9 +399,9 @@ def test_crash_mid_league_resumes_without_duplicates_and_settle_is_idempotent():
         await simulation_worker.recover(h2.rt)
         t = await h2.run_to_end(tid)
         assert t["state"] == "COMPLETED"
-        assert sql(f"select count(*) from ipl_matches where tournament_id={tid} and stage='LEAGUE'") == "90"
+        assert sql(f"select count(*) from ipl_matches where tournament_id={tid} and stage='LEAGUE'") == "42"
         assert sql(f"select count(*) from (select fixture_id from ipl_matches group by 1 having count(*)>1) x") == "0"
-        assert sql(f"select sum(played) from ipl_standings where tournament_id={tid}") == "180"
+        assert sql(f"select sum(played) from ipl_standings where tournament_id={tid}") == "84"
     run(go())
 
 
@@ -406,7 +410,8 @@ def test_worker_failure_pauses_tournament_and_resume_continues():
 
     async def go():
         h, tid, humans = await _started(2, max_failures=2)
-        await h.draft_all(humans)
+        await h.draft_all(humans, tid=tid)
+        await h.set_batting_orders(tid, humans)
         real = simulation_worker.simulate_match
         calls = {"n": 0}
 
@@ -443,7 +448,7 @@ def test_cancel_stops_everything_and_is_final():
         assert q.answers[-1][1]
         await draft_service.draft_tick(h.rt)
         await simulation_worker.tick(h.rt)
-        assert sql(f"select count(*) from ipl_draft_picks where tournament_id={tid}") == "0"
+        assert sql(f"select count(*) from ipl_draft_picks where tournament_id={tid} and team_id in (select id from ipl_tournament_teams where tournament_id={tid} and kind='HUMAN')") == "0"
         assert sql(f"select state from ipl_tournaments where id={tid}") == "CANCELLED"
         assert not await tournament_service.cancel(h.rt, await h.rt.repo.get(tid), "again")
     run(go())

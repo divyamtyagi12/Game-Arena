@@ -6,14 +6,9 @@ Postgres adapter used by the integration tests.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
 from typing import Any
 
 log = logging.getLogger(__name__)
-
-
-_local_orders: dict[int, list[str]] = {}
-_local_confirmed: set[int] = set()
 
 
 class IplRepo:
@@ -144,65 +139,9 @@ class IplRepo:
 
     # ── fixtures / league ──
     async def create_fixtures(self, tid: int, fixtures: list[dict]) -> dict:
-        try:
-            res = await self._r("ipl_create_fixtures", p_tid=tid, p_fixtures=fixtures)
-        except Exception as exc:
-            log.warning("ipl_create_fixtures RPC failed (%s), using fallback", exc)
-            res = None
-
-        if res and res.get("status") == "OK":
-            return res
-
-        log.warning("ipl_create_fixtures returned %s, applying direct fixture creation fallback", res)
-        return await self._fallback_create_fixtures(tid, fixtures)
-
-    async def _fallback_create_fixtures(self, tid: int, fixtures: list[dict]) -> dict:
-        try:
-            existing = await self.db.exec(
-                lambda c: c.table("ipl_fixtures").select("id").eq("tournament_id", tid).limit(1)
-            )
-        except Exception:
-            existing = []
-
-        if not existing:
-            rows = [
-                {
-                    "tournament_id": tid,
-                    "stage": f.get("stage", "LEAGUE"),
-                    "match_no": int(f["match_no"]),
-                    "matchday": int(f["matchday"]),
-                    "leg": int(f.get("leg", 1)),
-                    "home_team_id": int(f["home"]),
-                    "away_team_id": int(f["away"]),
-                }
-                for f in fixtures
-            ]
-            for i in range(0, len(rows), 50):
-                batch = rows[i : i + 50]
-                await self.db.exec(lambda c: c.table("ipl_fixtures").insert(batch))
-
-            teams = await self.all_teams(tid)
-            for tm in teams:
-                try:
-                    await self.db.exec(
-                        lambda c, t_id=tm["id"]: c.table("ipl_standings").insert(
-                            {"tournament_id": tid, "team_id": t_id}
-                        )
-                    )
-                except Exception:
-                    pass
-
-        now_iso = datetime.now(timezone.utc).isoformat()
-        try:
-            await self.db.exec(
-                lambda c: c.table("ipl_tournaments")
-                .update({"state": "LEAGUE_RUNNING", "league_started_at": now_iso})
-                .eq("id", tid)
-            )
-        except Exception as exc:
-            log.warning("Failed to update tournament state in fallback: %s", exc)
-
-        return {"status": "OK", "fixtures": len(fixtures), "fallback": True}
+        """Validated, atomic creation (ipl_create_fixtures). Errors propagate: a failure must be visible to the worker's
+        failure counter, never papered over with direct table inserts."""
+        return await self._r("ipl_create_fixtures", p_tid=tid, p_fixtures=fixtures)
 
     async def claim_fixtures(self, tid: int, owner: str, limit: int, stale: int = 300) -> list[dict]:
         return await self._r("ipl_claim_fixtures", p_tid=tid, p_owner=owner, p_limit=limit, p_stale=stale) or []
@@ -286,112 +225,47 @@ class IplRepo:
     async def import_players(self, source: dict, players: list[dict]) -> dict:
         return await self._r("ipl_import_players", p_source=source, p_players=players)
 
-    # ── batting order ──
+    # ── batting order (100% database-backed: survives restarts; no in-memory fallbacks) ──
     async def team_by_id(self, team_id: int) -> dict | None:
-        try:
-            return await self._r("ipl_team_by_id", p_team_id=team_id)
-        except Exception:
-            rows = await self.db.exec(lambda c: c.table("ipl_tournament_teams").select("*").eq("id", team_id).limit(1))
-            if rows:
-                tm = dict(rows[0])
-                tm["batting_order_confirmed"] = team_id in _local_confirmed or tm.get("batting_order_confirmed", False)
-                return tm
-            return None
+        return await self._r("ipl_team_by_id", p_team_id=team_id)
 
     async def get_batting_order_state(self, team_id: int) -> dict | None:
-        try:
-            res = await self._r("ipl_batting_order_state", p_team_id=team_id)
-            if res:
-                return res
-        except Exception:
-            pass
-        roster = await self.team_roster(team_id)
-        if not roster:
-            return None
-        players = roster.get("players", [])
-        picked_ids = _local_orders.get(team_id, [])
-        p_map = {str(p["id"]): p for p in players}
-        ordered = [p_map[pid] for pid in picked_ids if pid in p_map]
-        remaining = [{"pos": p["slot"], "player": p} for p in players if str(p["id"]) not in set(picked_ids)]
-        return {"players": players, "ordered": ordered, "remaining": remaining}
+        return await self._r("ipl_batting_order_state", p_team_id=team_id)
+
+    async def batting_order_begin(self, team_id: int, seconds: int) -> dict:
+        return await self._r("ipl_batting_order_begin", p_team_id=team_id, p_seconds=seconds)
+
+    async def batting_order_mark_prompted(self, team_id: int, message_id: int | None) -> None:
+        await self._r("ipl_batting_order_mark_prompted", p_team_id=team_id, p_message_id=message_id)
 
     async def batting_order_pick(self, team_id: int, pos: int) -> dict:
-        try:
-            return await self._r("ipl_batting_order_pick", p_team_id=team_id, p_pos=pos)
-        except Exception:
-            roster = await self.team_roster(team_id)
-            players = roster.get("players", []) if roster else []
-            cand = next((p for p in players if p["slot"] == pos), None)
-            if not cand:
-                return {"status": "NOT_FOUND"}
-            picked = _local_orders.setdefault(team_id, [])
-            pid = str(cand["id"])
-            if pid in picked:
-                return {"status": "ALREADY"}
-            picked.append(pid)
-            return {"status": "LAST" if len(picked) == 11 else "OK", "pos": pos, "order": len(picked)}
+        return await self._r("ipl_batting_order_pick", p_team_id=team_id, p_pos=pos)
 
     async def batting_order_undo(self, team_id: int) -> None:
-        try:
-            await self._r("ipl_batting_order_undo", p_team_id=team_id)
-        except Exception:
-            picked = _local_orders.get(team_id, [])
-            if picked:
-                picked.pop()
+        await self._r("ipl_batting_order_undo", p_team_id=team_id)
 
     async def batting_order_reset(self, team_id: int) -> None:
-        try:
-            await self._r("ipl_batting_order_reset", p_team_id=team_id)
-        except Exception:
-            _local_orders.pop(team_id, None)
-            _local_confirmed.discard(team_id)
+        await self._r("ipl_batting_order_reset", p_team_id=team_id)
 
     async def batting_order_confirm(self, team_id: int) -> dict:
-        try:
-            return await self._r("ipl_batting_order_confirm", p_team_id=team_id)
-        except Exception:
-            picked = _local_orders.get(team_id, [])
-            if len(picked) < 11:
-                return {"status": "INCOMPLETE", "count": len(picked)}
-            _local_confirmed.add(team_id)
-            return {"status": "OK"}
+        return await self._r("ipl_batting_order_confirm", p_team_id=team_id)
+
+    async def batting_order_autofill(self, team_id: int) -> None:
+        """Keeps the manager's partial picks, fills the rest with the engine rule, confirms."""
+        await self._r("ipl_batting_order_autofill", p_team_id=team_id)
 
     async def batting_order_auto_assign(self, team_id: int) -> None:
-        """Smart auto-assign: sort by ratings (via the DB function or smart order)."""
-        try:
-            await self._r("ipl_batting_order_auto_assign", p_team_id=team_id)
-        except Exception:
-            roster = await self.team_roster(team_id)
-            players = roster.get("players", []) if roster else []
-            _local_orders[team_id] = [str(p["id"]) for p in players]
-            _local_confirmed.add(team_id)
+        """AI franchises: full rating-based order (no-op once confirmed)."""
+        await self._r("ipl_batting_order_auto_assign", p_team_id=team_id)
 
     async def batting_order_set_order(self, team_id: int, player_ids: list[str]) -> None:
-        """Set a fully determined batting order from the given ordered player_id list."""
-        try:
-            await self._r("ipl_batting_order_set_order", p_team_id=team_id, p_player_ids=player_ids)
-        except Exception:
-            _local_orders[team_id] = list(player_ids)
-            _local_confirmed.add(team_id)
+        await self._r("ipl_batting_order_set_order", p_team_id=team_id, p_player_ids=player_ids)
+
+    async def batting_order_due(self, limit: int = 50) -> list[dict]:
+        return await self._r("ipl_batting_order_due", p_limit=limit) or []
 
     async def teams_pending_batting_order(self, tid: int) -> list[dict]:
-        """Human teams whose batting order is not yet confirmed."""
-        try:
-            res = await self._r("ipl_teams_pending_batting_order", p_tid=tid)
-            if res is not None:
-                return res
-        except Exception:
-            pass
-        teams = await self.all_teams(tid)
-        return [tm for tm in teams if tm["kind"] == "HUMAN" and tm.get("squad_complete") and tm["id"] not in _local_confirmed]
+        return await self._r("ipl_teams_pending_batting_order", p_tid=tid) or []
 
-    async def engine_squads_with_batting_order(self, tid: int) -> list[dict]:
-        """Like engine_squads but also returns the confirmed batting_order for each team."""
-        rows = await self._r("ipl_engine_squads", p_tid=tid) or []
-        for r in rows:
-            tid_val = int(r["team_id"])
-            if tid_val in _local_orders:
-                order_map = {pid: idx for idx, pid in enumerate(_local_orders[tid_val])}
-                r["players"].sort(key=lambda p: order_map.get(str(p["id"]), p.get("slot", 99)))
-        return rows
-
+    async def finish_drafting(self, tid: int, expected_system: int) -> dict:
+        return await self._r("ipl_finish_drafting", p_tid=tid, p_expected_system=expected_system)
