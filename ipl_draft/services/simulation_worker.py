@@ -154,6 +154,20 @@ async def _simulate(rt: IplRuntime, t: dict, fx: dict, squads: dict[int, Squad])
             except Exception:  # noqa: BLE001
                 pass
 
+    # ── Strict validation: verify system teams before match simulation ──
+    from ..engine.team_builder import validate_system_team_squad
+    for tm, side in [(h_team, fx["home"]), (a_team, fx["away"])]:
+        if tm and tm.get("kind") == "SYSTEM":
+            code = tm.get("franchise_code")
+            sq = squads.get(side)
+            if not sq or not sq.players:
+                log.error("Missing squad players for system team %s (%s)", tm["id"], code)
+                return {"status": "INVALID_SYSTEM_SQUAD", "team_id": tm["id"]}
+            ok, reason = validate_system_team_squad(tm["id"], sq.players, code)
+            if not ok:
+                log.error("SYSTEM SQUAD VALIDATION FAILED for team %s (%s): %s", tm["id"], code, reason)
+                return {"status": "INVALID_SYSTEM_SQUAD", "reason": reason, "team_id": tm["id"]}
+
     rng, seed = match_rng(rt, tid, fx["id"], t.get("draft_started_at"))
     out = simulate_match(squads[fx["home"]], squads[fx["away"]], rng, seed=seed)
 
@@ -207,7 +221,6 @@ async def _league(rt: IplRuntime, t: dict) -> bool:
         prog = await rt.repo.league_progress(tid)
         if prog["done"] < prog["total"]:
             return False                                           # claimed elsewhere; try again next tick
-        await _post_matchdays(rt, t)
         standings = await rt.repo.standings(tid)
         ranking = rank_teams(standings, await rt.repo.league_results(tid))
         res = await rt.repo.complete_league(tid, ranking)
@@ -216,36 +229,16 @@ async def _league(rt: IplRuntime, t: dict) -> bool:
         return True
     for fx in claimed:
         await _simulate(rt, t, fx, squads)
-    await _post_matchdays(rt, t)
+    # Fix 1: Do NOT post intermediate matchday summaries or points tables to group
     await rt.pause(rt.s.matchday_delay)
     return True
-
-
-async def _post_matchdays(rt: IplRuntime, t: dict) -> None:
-    tid = t["id"]
-    prog = await rt.repo.league_progress(tid)
-    fresh = await rt.repo.get(tid)
-    last = fresh["last_posted_matchday"] if fresh else prog["last_posted"]
-    teams = await rt.repo.all_teams(tid)
-    human_ids = {x["id"] for x in teams if x["kind"] == "HUMAN"}
-    for md in range(last + 1, prog["completed_matchdays"] + 1):
-        ids = await rt.repo.match_ids_for_matchday(tid, md)
-        cards = [await rt.repo.match_card(i) for i in ids]
-        cards = [c for c in cards if c]
-        standings = await rt.repo.standings(tid)
-        human_lines = [ln for c in cards if (ln := m.human_result_line(c, human_ids))]
-        prog_now = {**prog, "completed_matchdays": md}
-        await notify.set_dashboard(rt, fresh or t, m.dashboard_text(t, prog_now, standings, human_lines), kb.group_dashboard(tid))
-        if md % rt.s.summary_every == 0 or md == prog["matchdays"]:
-            await notify.group(rt, t["group_id"], m.matchday_summary(md, cards))
-        await rt.repo.mark_matchday_posted(tid, md)
 
 
 async def _league_completed(rt: IplRuntime, t: dict) -> bool:
     tid = t["id"]
     standings = await rt.repo.standings(tid)
-    await notify.group(rt, t["group_id"], m.league_complete_text(standings), Markup([[Btn("📊 FINAL POINTS TABLE", callback_data=f"ipl:tb:{tid}"),
-                                                                                   Btn("🔥 PLAYOFF BRACKET", callback_data=f"ipl:br:{tid}")]]))
+    # Fix 2 & 3: Exactly ONE final points table sent directly to group with ZERO inline buttons
+    await notify.group(rt, t["group_id"], m.league_complete_text(standings), markup=None)
     rank = {r["team_id"]: r["rank"] for r in standings}
     for tm in await rt.repo.all_teams(tid):
         if tm["kind"] == "HUMAN":
@@ -269,13 +262,16 @@ async def _playoff(rt: IplRuntime, t: dict) -> bool:
     if not home_tm or not away_tm:
         log.error("Invalid playoff fixture teams: home=%s away=%s", fx.get("home"), fx.get("away"))
         return False
-    await notify.group(rt, t["group_id"], m.playoff_intro(fx["stage"], home_tm, away_tm))
-    await rt.pause(rt.s.playoff_delay / 2)
+
+    # Fix 5: Do NOT send separate 'Simulating...' or temporary intro announcements to group
     res = await _simulate(rt, t, fx, squads)
-    if res.get("status") == "OK" and fx["stage"] != "FINAL":
-        card = await rt.repo.match_card(res["match_id"])
+    if res.get("status") == "OK":
+        # Fix 4: Send the COMPLETE playoff scorecard to the group chat (no buttons)
+        card = await rt.repo.scorecard(res["match_id"])
         if card:
-            await notify.group(rt, t["group_id"], m.match_card_text(card))
+            group_pages = m.format_full_scorecard(card, fx["stage"], user_id=None)
+            for page in group_pages:
+                await notify.group(rt, t["group_id"], page, markup=None)
     await rt.pause(rt.s.playoff_delay)
     return True
 
@@ -298,11 +294,12 @@ async def finalize(rt: IplRuntime, tid: int) -> None:
         await rt.repo.store_awards(tid, awards_engine.compute_awards(stats, champ, runner))
         bracket = await rt.repo.bracket(tid)
         final_match = next((b["match_id"] for b in bracket if b["stage"] == "FINAL"), None)
-        card = await rt.repo.match_card(final_match) if final_match else None
+        card = await rt.repo.scorecard(final_match) if final_match else None
         owner = champ["owner_name"] if champ and champ["kind"] == "HUMAN" else None
         if card and champ:
-            await notify.group(rt, t["group_id"], m.champion_text(card, champ, owner), kb.final_buttons(tid, final_match))
-        await notify.group(rt, t["group_id"], m.awards_text(await rt.repo.awards(tid)))
+            # Fix 11: Championship announcement without inline buttons
+            await notify.group(rt, t["group_id"], m.champion_text(card, champ, owner), markup=None)
+        await notify.group(rt, t["group_id"], m.awards_text(await rt.repo.awards(tid)), markup=None)
         for tm in teams.values():
             if tm["kind"] == "HUMAN":
                 won = champ and tm["id"] == champ["id"]

@@ -49,43 +49,55 @@ async def prepare_system_teams(rt: IplRuntime, tid: int) -> None:
             continue
         team_id = s_team["id"]
 
-        # Check existing roster
+        # Verify existing roster matches target 2026 squad
+        target_names = SYSTEM_PLAYING_XI[code]
+        target_pids = []
+        for nm in target_names:
+            p = by_name.get(normalize_name(nm))
+            if p:
+                target_pids.append(p["id"])
+            else:
+                log.warning("System team player not found in DB: %s", nm)
+
         roster = (await _db_call(
-            lambda c: c.table("ipl_team_rosters").select("id, slot, player_id").eq("team_id", team_id)
+            lambda c: c.table("ipl_team_rosters").select("id, slot, player_id, batting_order").eq("team_id", team_id)
         )) or []
-        if len(roster) < 11 or not s_team.get("squad_complete") or not s_team.get("batting_order_confirmed"):
-            names = SYSTEM_PLAYING_XI[code]
-            roster_pids = {r["player_id"] for r in roster}
-            for idx, nm in enumerate(names, 1):
+        current_pids = [r["player_id"] for r in sorted(roster, key=lambda x: x.get("batting_order") or x.get("slot") or 0)]
+
+        # If roster is incomplete, mismatched, or contains non-2026 franchise players, repair it
+        if current_pids != target_pids or not s_team.get("squad_complete") or not s_team.get("batting_order_confirmed"):
+            if roster:
+                await _db_call(lambda c: c.table("ipl_team_rosters").delete().eq("team_id", team_id))
+
+            for idx, nm in enumerate(target_names, 1):
                 p = by_name.get(normalize_name(nm))
                 if not p:
-                    log.warning("System team player not found: %s", nm)
                     continue
                 pid = p["id"]
-                if pid not in roster_pids:
-                    await _db_call(
-                        lambda c: c.table("ipl_team_rosters").insert({
-                            "tournament_id": tid,
-                            "team_id": team_id,
-                            "player_id": pid,
-                            "slot": idx,
-                            "batting_order": idx,
-                            "source": "SYSTEM",
-                        })
-                    )
-                    roster_pids.add(pid)
-                else:
-                    await _db_call(
-                        lambda c: c.table("ipl_team_rosters").update({
-                            "batting_order": idx,
-                            "slot": idx,
-                        }).eq("team_id", team_id).eq("player_id", pid)
-                    )
+                await _db_call(
+                    lambda c: c.table("ipl_team_rosters").insert({
+                        "tournament_id": tid,
+                        "team_id": team_id,
+                        "player_id": pid,
+                        "slot": idx,
+                        "batting_order": idx,
+                        "source": "SYSTEM",
+                    })
+                )
+
             await _db_call(
                 lambda c: c.table("ipl_tournament_teams").update({
                     "squad_complete": True,
                     "batting_order_confirmed": True,
                 }).eq("id", team_id)
             )
+
+        # Validate Playing XI strictly against IPL rules
+        from ..engine.team_builder import validate_system_team_squad
+        squad_objs = [by_name.get(normalize_name(nm)) for nm in target_names if normalize_name(nm) in by_name]
+        is_valid, reason = validate_system_team_squad(team_id, squad_objs, code)
+        if not is_valid:
+            log.error("SYSTEM SQUAD VALIDATION FAILED for %s: %s", code, reason)
+            raise RuntimeError(f"System squad validation failed for {code}: {reason}")
 
     await rt.repo.complete_system_teams(tid)

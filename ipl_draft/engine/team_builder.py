@@ -35,8 +35,8 @@ SYSTEM_PLAYING_XI: dict[str, list[str]] = {
     ],
     "RCB": [
         "Virat Kohli", "Phil Salt", "Rajat Patidar", "Devdutt Padikkal",
-        "Venkatesh Iyer", "Krunal Pandya", "Tim David", "Romario Shepherd",
-        "Bhuvneshwar Kumar", "Josh Hazlewood", "Yash Dayal",
+        "Krunal Pandya", "Tim David", "Romario Shepherd", "Bhuvneshwar Kumar",
+        "Suyash Sharma", "Josh Hazlewood", "Yash Dayal",
     ],
     "KKR": [
         "Sunil Narine", "Ajinkya Rahane", "Angkrish Raghuvanshi", "Rahul Tripathi",
@@ -44,6 +44,102 @@ SYSTEM_PLAYING_XI: dict[str, list[str]] = {
         "Matheesha Pathirana", "Varun Chakravarthy", "Umran Malik",
     ],
 }
+
+OFFICIAL_IPL_2026_SQUADS: dict[str, set[str]] = {
+    "RCB": {
+        "Virat Kohli", "Rajat Patidar", "Phil Salt", "Devdutt Padikkal", "Krunal Pandya",
+        "Tim David", "Romario Shepherd", "Bhuvneshwar Kumar", "Suyash Sharma", "Josh Hazlewood",
+        "Yash Dayal", "Jitesh Sharma", "Swapnil Singh", "Jacob Bethell", "Nuwan Thushara",
+        "Rasikh Dar", "Jordan Cox", "Abhinandan Singh", "Kanishk Chouhan", "Manoj Bhandage",
+        "Swastik Chikara", "Mohit Rathee",
+    },
+    "KKR": {
+        "Sunil Narine", "Ajinkya Rahane", "Angkrish Raghuvanshi", "Rahul Tripathi", "Rinku Singh",
+        "Finn Allen", "Ramandeep Singh", "Harshit Rana", "Matheesha Pathirana", "Varun Chakravarthy",
+        "Umran Malik", "Cameron Green", "Vaibhav Arora", "Anukul Roy", "Rovman Powell",
+        "Manish Pandey", "Kartik Tyagi", "Tejasvi Dahiya", "Luvnith Sisodia", "Blessing Muzarabani",
+        "Navdeep Saini", "Venkatesh Iyer",
+    },
+    "MI": {
+        "Rohit Sharma", "Ryan Rickelton", "Suryakumar Yadav", "Tilak Varma", "Hardik Pandya",
+        "Will Jacks", "Shardul Thakur", "Trent Boult", "Deepak Chahar", "Jasprit Bumrah",
+        "Mayank Markande", "Quinton de Kock", "Mitchell Santner", "Naman Dhir", "Robin Minz",
+        "Corbin Bosch", "Raj Angad Bawa", "Ashwani Kumar", "Allah Ghazanfar", "Sherfane Rutherford",
+        "Danish Malewar", "Avesh Khan", "Arjun Tendulkar",
+    },
+    "CSK": {
+        "Ruturaj Gaikwad", "Ayush Mhatre", "Sanju Samson", "Shivam Dube", "Dewald Brevis",
+        "MS Dhoni", "Shreyas Gopal", "Akeal Hosein", "Noor Ahmad", "Khaleel Ahmed",
+        "Rahul Chahar", "Urvil Patel", "Kartik Sharma", "Matthew Short", "Sarfaraz Khan",
+        "Anshul Kamboj", "Jamie Overton", "Mukesh Choudhary", "Matt Henry", "Nathan Ellis",
+        "Spencer Johnson", "Gurjapneet Singh", "Prashant Veer", "Zak Foulkes", "Akash Madhwal",
+    },
+}
+
+OVERSEAS_PLAYERS_2026: set[str] = {
+    "Phil Salt", "Tim David", "Romario Shepherd", "Josh Hazlewood", "Jacob Bethell", "Nuwan Thushara", "Jordan Cox",
+    "Sunil Narine", "Finn Allen", "Matheesha Pathirana", "Cameron Green", "Rovman Powell", "Blessing Muzarabani",
+    "Ryan Rickelton", "Will Jacks", "Trent Boult", "Quinton de Kock", "Mitchell Santner", "Corbin Bosch", "Allah Ghazanfar", "Sherfane Rutherford",
+    "Dewald Brevis", "Akeal Hosein", "Noor Ahmad", "Matthew Short", "Jamie Overton", "Matt Henry", "Nathan Ellis", "Spencer Johnson", "Zak Foulkes",
+}
+
+
+def validate_system_team_squad(team_id: int, playing_xi: Sequence[Any], franchise_code: str) -> tuple[bool, str]:
+    """Validates that a computer-controlled system franchise Playing XI strictly conforms to IPL rules:
+    1. Exactly 11 players.
+    2. Every player is an officially verified member of that franchise's IPL 2026 squad.
+    3. No cross-team player assignments (e.g. Rishabh Pant or Venkatesh Iyer on RCB).
+    4. No duplicates in the Playing XI.
+    5. Maximum 4 overseas players.
+    6. Contains at least one wicketkeeper (role == 'WK').
+    """
+    if franchise_code not in OFFICIAL_IPL_2026_SQUADS:
+        return False, f"Unknown system franchise code: {franchise_code}"
+
+    if len(playing_xi) != 11:
+        return False, f"System team {franchise_code} must have exactly 11 players (got {len(playing_xi)})"
+
+    official_squad = OFFICIAL_IPL_2026_SQUADS[franchise_code]
+
+    names: list[str] = []
+    wk_count = 0
+    overseas_count = 0
+
+    for p in playing_xi:
+        if hasattr(p, "name"):
+            name = p.name
+            role = getattr(p, "role", "")
+            nationality = getattr(p, "nationality", None)
+        elif isinstance(p, dict):
+            name = p.get("name") or p.get("display_name") or ""
+            role = p.get("role", "")
+            nationality = p.get("nationality")
+        else:
+            name = str(p)
+            role = ""
+            nationality = None
+
+        names.append(name)
+
+        if name not in official_squad:
+            return False, f"Player '{name}' does not belong to {franchise_code} verified IPL 2026 squad"
+
+        if (nationality and nationality not in ("India", "Indian")) or name in OVERSEAS_PLAYERS_2026:
+            overseas_count += 1
+
+        if role == "WK" or name in ("Phil Salt", "Finn Allen", "Ryan Rickelton", "MS Dhoni", "Sanju Samson"):
+            wk_count += 1
+
+    if len(set(names)) != 11:
+        return False, f"Duplicate players detected in {franchise_code} Playing XI: {names}"
+
+    if overseas_count > 4:
+        return False, f"Maximum 4 overseas players allowed in Playing XI, found {overseas_count} in {franchise_code}"
+
+    if wk_count < 1:
+        return False, f"Playing XI for {franchise_code} must contain at least 1 wicketkeeper"
+
+    return True, "OK"
 
 
 def franchise_payload() -> list[dict]:

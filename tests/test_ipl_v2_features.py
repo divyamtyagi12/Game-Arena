@@ -403,3 +403,128 @@ def test_fix2_and_test12_to_18_scorecards_all_stages_no_buttons():
         # Verify ZERO buttons
         assert kb.dm_match_card_buttons(1, 501) is None
 
+
+def test_fix1_and_fix2_final_league_points_table():
+    """FIX 1, 2, 3: Final league points table formatting, Q/E markers, and zero inline buttons."""
+    standings = [
+        {"team_id": 1, "name": "Chennai Super Kings", "short_name": "CSK", "kind": "SYSTEM", "played": 10, "won": 8, "lost": 2, "points": 16, "nrr": 1.45},
+        {"team_id": 2, "name": "Royal Challengers Bengaluru", "short_name": "RCB", "kind": "SYSTEM", "played": 10, "won": 7, "lost": 3, "points": 14, "nrr": 0.92},
+        {"team_id": 3, "name": "Kolkata Knight Riders", "short_name": "KKR", "kind": "SYSTEM", "played": 10, "won": 6, "lost": 4, "points": 12, "nrr": 0.51},
+        {"team_id": 4, "name": "Mumbai Indians", "short_name": "MI", "kind": "SYSTEM", "played": 10, "won": 5, "lost": 5, "points": 10, "nrr": 0.12},
+        {"team_id": 5, "name": "Dre XI", "short_name": "DRE", "kind": "HUMAN", "played": 10, "won": 4, "lost": 6, "points": 8, "nrr": -0.21},
+        {"team_id": 6, "name": "Rahul XI", "short_name": "RAH", "kind": "HUMAN", "played": 10, "won": 3, "lost": 7, "points": 6, "nrr": -0.65},
+    ]
+
+    table_text = m.league_complete_text(standings)
+
+    # 1. Title
+    assert "IPL DRAFT — LEAGUE STAGE COMPLETED!" in table_text
+    # 2. Columns
+    assert "POS  TEAM          P   W   L   PTS    NRR" in table_text
+    # 3. Top 4 marked Q
+    assert "Q1   CSK" in table_text
+    assert "Q2   RCB" in table_text
+    assert "Q3   KKR" in table_text
+    assert "Q4   MI" in table_text
+    # 4. Remaining marked E
+    assert "E5   Dre XI" in table_text
+    assert "E6   Rahul XI" in table_text
+    # 5. Explanations
+    assert "✅ Q = Qualified for Playoffs" in table_text
+    assert "❌ E = Eliminated" in table_text
+    assert "TOP 4 QUALIFIED!" in table_text
+    assert "IPL PLAYOFFS BEGIN!" in table_text
+    # 6. Pre tags used for alignment
+    assert "<pre>" in table_text and "</pre>" in table_text
+
+
+def test_fix6_7_8_ai_teams_squad_validation():
+    """FIX 6, 7, 8: Strict squad validation for AI teams (RCB, KKR, MI, CSK)."""
+    from ipl_draft.engine.team_builder import SYSTEM_PLAYING_XI, validate_system_team_squad
+
+    # Valid predefined squads pass validation
+    for code, squad in SYSTEM_PLAYING_XI.items():
+        ok, reason = validate_system_team_squad(1, squad, code)
+        assert ok, f"{code} squad validation failed: {reason}"
+
+    # Invalid player (Rishabh Pant on RCB) MUST fail validation
+    invalid_rcb_pant = list(SYSTEM_PLAYING_XI["RCB"])
+    invalid_rcb_pant[0] = "Rishabh Pant"
+    ok, reason = validate_system_team_squad(1, invalid_rcb_pant, "RCB")
+    assert not ok
+    assert "Rishabh Pant" in reason
+
+    # Invalid player (Venkatesh Iyer on RCB) MUST fail validation
+    invalid_rcb_venky = list(SYSTEM_PLAYING_XI["RCB"])
+    invalid_rcb_venky[0] = "Venkatesh Iyer"
+    ok, reason = validate_system_team_squad(1, invalid_rcb_venky, "RCB")
+    assert not ok
+    assert "Venkatesh Iyer" in reason
+
+    # Too many overseas players (> 4) MUST fail validation
+    invalid_overseas = [
+        "Phil Salt", "Tim David", "Romario Shepherd", "Josh Hazlewood", "Jacob Bethell",  # 5 overseas
+        "Virat Kohli", "Rajat Patidar", "Devdutt Padikkal", "Krunal Pandya", "Bhuvneshwar Kumar", "Yash Dayal"
+    ]
+    ok, reason = validate_system_team_squad(1, invalid_overseas, "RCB")
+    assert not ok
+    assert "Maximum 4 overseas" in reason
+
+    # Duplicate players MUST fail validation
+    invalid_duplicates = list(SYSTEM_PLAYING_XI["RCB"])
+    invalid_duplicates[1] = invalid_duplicates[0]  # Duplicate Virat Kohli
+    ok, reason = validate_system_team_squad(1, invalid_duplicates, "RCB")
+    assert not ok
+    assert "Duplicate players" in reason
+
+
+def test_fix4_playoff_scorecard_group_and_dm():
+    """FIX 4 & 5: Playoff matches send complete scorecards to group and DMs with zero buttons."""
+    card = {
+        "match_id": 801,
+        "stage": "PLAYOFF_ELIMINATOR",
+        "home_team": {"id": 3, "name": "Mumbai Indians", "short_name": "MI"},
+        "away_team": {"id": 4, "name": "Kolkata Knight Riders", "short_name": "KKR"},
+        "winner_team_id": 3,
+        "summary": "Mumbai Indians won by 36 runs",
+        "innings_detail": [
+            {
+                "innings_no": 1, "is_super_over": False, "runs": 169, "wickets": 5, "legal_balls": 120,
+                "batting_team": {"name": "Mumbai Indians", "short_name": "MI"},
+                "batting": [
+                    {"name": "Rohit Sharma", "runs": 45, "balls": 32, "fours": 5, "sixes": 2, "did_bat": True},
+                    {"name": "Suryakumar Yadav", "runs": 66, "balls": 39, "fours": 7, "sixes": 3, "did_bat": True},
+                ],
+                "bowling": [{"name": "Harshit Rana", "legal_balls": 24, "runs": 28, "wickets": 2}],
+            },
+            {
+                "innings_no": 2, "is_super_over": False, "runs": 133, "wickets": 10, "legal_balls": 103,
+                "batting_team": {"name": "Kolkata Knight Riders", "short_name": "KKR"},
+                "batting": [
+                    {"name": "Sunil Narine", "runs": 42, "balls": 28, "fours": 4, "sixes": 2, "did_bat": True},
+                ],
+                "bowling": [{"name": "Jasprit Bumrah", "legal_balls": 24, "runs": 23, "wickets": 3}],
+            }
+        ]
+    }
+
+    # Group message format (user_id=None)
+    pages_group = m.format_full_scorecard(card, "PLAYOFF_ELIMINATOR", user_id=None)
+    text_group = "\n\n".join(pages_group)
+    assert "IPL DRAFT — ELIMINATOR" in text_group
+    assert "Mumbai Indians" in text_group
+    assert "Kolkata Knight Riders" in text_group
+    assert "Rohit Sharma" in text_group
+    assert "Suryakumar Yadav" in text_group
+    assert "Harshit Rana" in text_group
+    assert "Jasprit Bumrah" in text_group
+    assert "Mumbai Indians won by 36 runs" in text_group
+    # Neutral view in group does not include "YOU WON!"
+    assert "YOU WON!" not in text_group
+
+    # DM format (user_id=3 -> MI manager)
+    pages_dm = m.format_full_scorecard(card, "PLAYOFF_ELIMINATOR", user_id=3)
+    text_dm = "\n\n".join(pages_dm)
+    assert "YOU WON!" in text_dm
+
+

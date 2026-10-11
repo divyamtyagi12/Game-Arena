@@ -452,10 +452,33 @@ def bracket_text(bracket: Sequence[Mapping], standings: Sequence[Mapping]) -> st
 
 
 def league_complete_text(rows: Sequence[Mapping]) -> str:
-    top = rows[:4]
-    names = ["Rank 1", "Rank 2", "Rank 3", "Rank 4"]
-    lines = [f"{MEDALS[i + 1]} {names[i]}: <b>{esc(r['name'].upper())}</b>" for i, r in enumerate(top)]
-    return "🏆 <b>LEAGUE STAGE COMPLETED!</b>\n\n" + "\n".join(lines) + f"\n\n{LINE}\n\n🔥 <b>TOP 4 QUALIFIED!</b>\n\n🏆 <b>IPL PLAYOFFS BEGIN!</b>"
+    out = [
+        "🏆 <b>IPL DRAFT — LEAGUE STAGE COMPLETED!</b>",
+        "",
+        "━━━━━━━━━━━━━━━━━━━━━━━━",
+        "",
+        "<pre>POS  TEAM          P   W   L   PTS    NRR",
+    ]
+    for i, r in enumerate(rows, 1):
+        tag = f"Q{i}" if i <= 4 else f"E{i}"
+        name = _tname(r, 12)
+        p = r.get("played", 0)
+        w = r.get("won", 0)
+        l = r.get("lost", 0)
+        pts = r.get("points", 0)
+        nrr = float(r.get("nrr", 0.0))
+        out.append(f"{tag:<4} {name:<12} {p:>3} {w:>3} {l:>3} {pts:>5} {nrr:>+7.2f}")
+    out.append("</pre>")
+    out.append("")
+    out.append("━━━━━━━━━━━━━━━━━━━━━━━━")
+    out.append("")
+    out.append("✅ Q = Qualified for Playoffs")
+    out.append("❌ E = Eliminated")
+    out.append("")
+    out.append("🔥 <b>TOP 4 QUALIFIED!</b>")
+    out.append("")
+    out.append("🏆 <b>IPL PLAYOFFS BEGIN!</b>")
+    return "\n".join(out)
 
 
 def playoff_intro(stage: str, home: Mapping, away: Mapping) -> str:
