@@ -197,6 +197,8 @@ async def table(rt, context, q, tid: int, in_place: bool = False) -> None:
         return
     if t["state"] in ("LOBBY", "DRAFTING", "SYSTEM_TEAM_GENERATION", "FIXTURE_GENERATION"):
         return await safe_answer(q, "🏆 The league hasn't started yet.", True)
+    if t["state"] == "LEAGUE_RUNNING":
+        return await safe_answer(q, "⏳ Points table will be revealed after the league stage finishes!", True)
     rows = await rt.repo.standings(tid)
     await safe_answer(q, "🔄 Updated" if in_place else None)
     await _show(rt, q, m.points_table(rows), kb.table_markup(tid), in_place)
@@ -300,7 +302,7 @@ async def scorecard(rt, context, q, match_id: int, page: int, in_place: bool = F
     nav.append(Btn(f"{page + 1}/{len(pages)}", callback_data=f"ipl:sp:{match_id}:{page}"))
     if page < len(pages) - 1:
         nav.append(Btn("▶️", callback_data=f"ipl:sp:{match_id}:{page + 1}"))
-    markup = Markup([nav, [Btn("🏆 POINTS TABLE", callback_data=f"ipl:tb:{t['id']}")]])
+    markup = Markup([nav]) if nav else None
     await _show(rt, q, pages[page], markup, in_place)
 
 

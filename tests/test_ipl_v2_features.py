@@ -528,3 +528,69 @@ def test_fix4_playoff_scorecard_group_and_dm():
     assert "YOU WON!" in text_dm
 
 
+def test_squad_performance_text_exact_format():
+    """Verify squad tournament performance text sent to DM matches user's exact specification."""
+    squad_players = [
+        {"name": "Sunil Narine", "id": "1"},
+        {"name": "Travis Head", "id": "2"},
+        {"name": "Nicholas Pooran", "id": "3"},
+        {"name": "Hardik Pandya", "id": "4"},
+        {"name": "Andre Russell", "id": "5"},
+        {"name": "Krunal Pandya", "id": "6"},
+        {"name": "David Miller", "id": "7"},
+        {"name": "Marcus Stoinis", "id": "8"},
+        {"name": "Kagiso Rabada", "id": "9"},
+        {"name": "Jasprit Bumrah", "id": "10"},
+        {"name": "Arshdeep Singh", "id": "11"},
+    ]
+
+    stats = [
+        {"player_id": "1", "name": "Sunil Narine", "runs": 288, "wickets": 21},
+        {"player_id": "2", "name": "Travis Head", "runs": 293, "wickets": 0},
+        {"player_id": "3", "name": "Nicholas Pooran", "runs": 385, "wickets": 0},
+        {"player_id": "4", "name": "Hardik Pandya", "runs": 293, "wickets": 22},
+        {"player_id": "5", "name": "Andre Russell", "runs": 345, "wickets": 19},
+        {"player_id": "6", "name": "Krunal Pandya", "runs": 88, "wickets": 0},
+        {"player_id": "7", "name": "David Miller", "runs": 344, "wickets": 0},
+        {"player_id": "8", "name": "Marcus Stoinis", "runs": 191, "wickets": 0},
+        {"player_id": "9", "name": "Kagiso Rabada", "runs": 69, "wickets": 21},
+        {"player_id": "10", "name": "Jasprit Bumrah", "runs": 45, "wickets": 26},
+        {"player_id": "11", "name": "Arshdeep Singh", "runs": 28, "wickets": 20},
+    ]
+
+    text = m.squad_performance_text(squad_players, stats)
+
+    assert "📋 <b>Your XI — Tournament Performance</b>" in text
+    assert "1. Sunil Narine — 288 runs, 21 wkts" in text
+    assert "2. Travis Head — 293 runs" in text
+    assert "3. Nicholas Pooran — 385 runs" in text
+    assert "4. Hardik Pandya — 293 runs, 22 wkts" in text
+    assert "5. Andre Russell — 345 runs, 19 wkts" in text
+    assert "6. Krunal Pandya — 88 runs" in text
+    assert "7. David Miller — 344 runs" in text
+    assert "8. Marcus Stoinis — 191 runs" in text
+    assert "9. Kagiso Rabada — 69 runs, 21 wkts" in text
+    assert "10. Jasprit Bumrah — 45 runs, 26 wkts" in text
+    assert "11. Arshdeep Singh — 28 runs, 20 wkts" in text
+    assert "Team totals: 2369 runs, 129 wickets" in text
+
+
+def test_lobby_shows_only_joined_players_no_waiting():
+    """Verify lobby text only displays joined players and does not show 'Waiting...' rows."""
+    t = {"max_humans": 8, "min_humans": 2, "state": "LOBBY"}
+    teams = [
+        {"owner_name": "STARK 🇮🇳"},
+        {"owner_name": "Dre"},
+    ]
+
+    lobby_out = m.lobby_text(t, teams)
+
+    assert "1. STARK 🇮🇳" in lobby_out
+    assert "2. Dre" in lobby_out
+    assert "Waiting..." not in lobby_out
+    assert "3." not in lobby_out
+    assert "4." not in lobby_out
+    assert "8." not in lobby_out
+
+
+

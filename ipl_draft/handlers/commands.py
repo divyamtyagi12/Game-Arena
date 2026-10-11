@@ -90,6 +90,8 @@ async def ipltable_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return await msg.reply_html("No IPL Draft found. Send /ipl in a group to start one.")
     if t["state"] in ("LOBBY", "DRAFTING", "SYSTEM_TEAM_GENERATION", "FIXTURE_GENERATION", "CANCELLED"):
         return await msg.reply_html("🏆 The league hasn't started yet.")
+    if t["state"] == "LEAGUE_RUNNING":
+        return await msg.reply_html("⏳ Points table will be dropped after the league stage finishes!")
     await msg.reply_html(m.points_table(await rt.repo.standings(t["id"])), reply_markup=kb.table_markup(t["id"]))
 
 

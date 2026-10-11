@@ -305,6 +305,22 @@ async def finalize(rt: IplRuntime, tid: int) -> None:
                 won = champ and tm["id"] == champ["id"]
                 await notify.dm(rt, tm["user_id"], ("🏆 <b>YOU ARE THE IPL DRAFT CHAMPION!</b>" if won else
                                                     f"🏁 IPL Draft finished — champion: <b>{m.esc(champ['name']) if champ else '?'}</b>."))
+                try:
+                    roster_data = await rt.repo.team_roster(tm["id"])
+                    squad_players = roster_data.get("players", []) if roster_data else []
+                    bo_state = await rt.repo.get_batting_order_state(tm["id"])
+                    if bo_state and bo_state.get("ordered") and len(bo_state["ordered"]) == 11:
+                        squad_players = bo_state["ordered"]
+                    elif squad_players:
+                        squad_players = sorted(
+                            squad_players,
+                            key=lambda p: (p.get("batting_order") is None, p.get("batting_order", 99), p.get("slot", 99))
+                        )
+                    if squad_players:
+                        perf_text = m.squad_performance_text(squad_players, stats)
+                        await notify.dm(rt, tm["user_id"], perf_text)
+                except Exception:
+                    log.exception("Failed to send squad performance DM to user %s (team %s)", tm.get("user_id"), tm.get("id"))
         await rt.repo.update(tid, final_announced=True)
 
 

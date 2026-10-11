@@ -48,9 +48,10 @@ def clock(ts: str | None) -> str:
 # ───────────────────────── lobby ─────────────────────────
 def lobby_text(t: Mapping, teams: Sequence[Mapping]) -> str:
     n, mx = len(teams), t["max_humans"]
-    rows = []
-    for i in range(mx):
-        rows.append(f"{i + 1}. {esc(teams[i]['owner_name'])}" if i < n else f"{i + 1}. <i>Waiting...</i>")
+    if teams:
+        rows = [f"{i + 1}. {esc(teams[i]['owner_name'])}" for i in range(n)]
+    else:
+        rows = ["<i>No players yet.</i>"]
     status = {"LOBBY": "", "CANCELLED": "\n\n❌ <b>Cancelled</b>"}.get(t["state"], "\n\n🔒 <b>Lobby closed — the draft has started!</b>")
     return (
         "🏏 <b>IPL DRAFT</b>\n\n🏆 <b>MULTIPLAYER CRICKET TOURNAMENT</b>\n\n"
@@ -638,4 +639,71 @@ def dm_playoff_intro(stage: str, your_team_id: int, home: Mapping, away: Mapping
             f"Your team: <b>{esc(you.get('name', '?'))}</b>\n"
             f"Opponent: <b>{esc(opp.get('name', '?'))}</b>\n\n"
             "⚡ Match simulation starting…")
+
+
+def squad_performance_text(players: Sequence[Mapping], stats: Sequence[Mapping] | Mapping[Any, Mapping]) -> str:
+    """Format the XI squad tournament performance sent to user DM at tournament conclusion.
+
+    Example:
+    📋 Your XI — Tournament Performance
+
+    1. Sunil Narine — 288 runs, 21 wkts
+    2. Travis Head — 293 runs
+    3. Nicholas Pooran — 385 runs
+    4. Hardik Pandya — 293 runs, 22 wkts
+    ...
+    Team totals: 2369 runs, 129 wickets
+    """
+    stats_by_id: dict[str, Mapping] = {}
+    stats_by_name: dict[str, Mapping] = {}
+    if isinstance(stats, Mapping):
+        for k, v in stats.items():
+            if isinstance(v, Mapping):
+                stats_by_id[str(k)] = v
+                if "name" in v:
+                    stats_by_name[str(v["name"]).strip().lower()] = v
+    else:
+        for s in stats:
+            if isinstance(s, Mapping):
+                pid = str(s.get("player_id") or s.get("id") or "")
+                if pid:
+                    stats_by_id[pid] = s
+                name = str(s.get("name") or s.get("display_name") or "").strip().lower()
+                if name:
+                    stats_by_name[name] = s
+
+    lines: list[str] = []
+    tot_runs = 0
+    tot_wkts = 0
+
+    for i, p in enumerate(players, 1):
+        pid = str(p.get("id") or p.get("player_id") or "")
+        pname = str(p.get("name") or p.get("display_name") or "Player").strip()
+        st = stats_by_id.get(pid) or stats_by_name.get(pname.lower()) or {}
+
+        runs = int(st.get("runs") or 0)
+        wkts = int(st.get("wickets") or 0)
+        tot_runs += runs
+        tot_wkts += wkts
+
+        if runs > 0 and wkts > 0:
+            w_str = "wkts" if wkts != 1 else "wkt"
+            perf = f"{runs} runs, {wkts} {w_str}"
+        elif wkts > 0:
+            w_str = "wkts" if wkts != 1 else "wkt"
+            perf = f"{wkts} {w_str}"
+        else:
+            perf = f"{runs} runs"
+
+        lines.append(f"{i}. {esc(pname)} — {perf}")
+
+    w_total_str = "wickets" if tot_wkts != 1 else "wicket"
+    totals_line = f"Team totals: {tot_runs} runs, {tot_wkts} {w_total_str}"
+
+    return (
+        "📋 <b>Your XI — Tournament Performance</b>\n\n"
+        + "\n".join(lines)
+        + f"\n\n{totals_line}"
+    )
+
 
