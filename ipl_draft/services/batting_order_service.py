@@ -42,8 +42,7 @@ async def send_prompt(rt: IplRuntime, team_id: int) -> None:
     if not state:
         return
     text = m.batting_order_prompt(state["players"], state["ordered"], state["remaining"])
-    markup = (kb.batting_order_confirm(team_id) if not state["remaining"]
-              else kb.batting_order(team_id, state["remaining"], len(state["ordered"])))
+    markup = kb.batting_order(team_id, state["players"])
     sent = await notify.dm(rt, team["user_id"], text, markup)
     if sent:
         await rt.repo.batting_order_mark_prompted(team_id, sent.message_id)
@@ -72,8 +71,15 @@ async def pick_batter(rt: IplRuntime, user_id: int, team_id: int, pos: int, dm_m
     if st != "OK":
         return st
     res = await rt.repo.batting_order_pick(team_id, pos)
-    if res.get("status") not in ("OK", "LAST"):
-        return res.get("status", "ERROR")
+    status = res.get("status")
+    if status == "LAST":
+        # Automatically complete ordering after all 11 players are selected
+        await confirm_order(rt, user_id, team_id, dm_msg_id)
+        return "DONE"
+    if status == "ALREADY":
+        return "ALREADY"
+    if status != "OK":
+        return status
     return await _refresh_dm(rt, user_id, team, dm_msg_id)
 
 
@@ -106,7 +112,9 @@ async def confirm_order(rt: IplRuntime, user_id: int, team_id: int, dm_msg_id: i
     state = await rt.repo.get_batting_order_state(team_id)
     ordered = state["ordered"] if state else []
     text = m.batting_order_confirmed_text(ordered)
-    if not await notify.edit_dm(rt, user_id, dm_msg_id or team.get("batting_order_message_id"), text):
+    mid = dm_msg_id or team.get("batting_order_message_id")
+    # Clear markup so buttons are removed when complete
+    if not await notify.edit_dm(rt, user_id, mid, text, markup=None):
         await notify.dm(rt, user_id, text)
     await _maybe_advance(rt, team["tournament_id"])
     return "OK"
@@ -121,7 +129,7 @@ async def auto_assign_order(rt: IplRuntime, team: dict, *, announce: bool = True
         ordered = state["ordered"] if state else []
         text = m.batting_order_timeout_text(ordered)
         fresh = await rt.repo.team_by_id(team_id) or team
-        if not await notify.edit_dm(rt, team["user_id"], fresh.get("batting_order_message_id"), text):
+        if not await notify.edit_dm(rt, team["user_id"], fresh.get("batting_order_message_id"), text, markup=None):
             await notify.dm(rt, team["user_id"], text)
     await _maybe_advance(rt, team["tournament_id"])
 
@@ -131,12 +139,8 @@ async def _refresh_dm(rt: IplRuntime, user_id: int, team: dict, dm_msg_id: int |
     state = await rt.repo.get_batting_order_state(team["id"])
     if not state:
         return "ERROR"
-    if state["remaining"]:
-        text = m.batting_order_prompt(state["players"], state["ordered"], state["remaining"])
-        markup = kb.batting_order(team["id"], state["remaining"], len(state["ordered"]))
-    else:
-        text = m.batting_order_prompt(state["players"], state["ordered"], [])
-        markup = kb.batting_order_confirm(team["id"])
+    text = m.batting_order_prompt(state["players"], state["ordered"], state["remaining"])
+    markup = kb.batting_order(team["id"], state["players"])
     mid = dm_msg_id or team.get("batting_order_message_id")
     if mid:
         await notify.edit_dm(rt, user_id, mid, text, markup)

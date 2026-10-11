@@ -66,26 +66,6 @@ async def _own_open_offer(rt: IplRuntime, user_id: int, offer_id: int) -> tuple[
     return "OK", {**offer, "team": team}
 
 
-async def show_confirm(rt: IplRuntime, user_id: int, offer_id: int, pos: int) -> tuple[str, str | None, object | None]:
-    """Returns (status, text, markup)."""
-    st, offer = await _own_open_offer(rt, user_id, offer_id)
-    if st != "OK":
-        return st, None, None
-    card = next((c for c in offer["candidates"] if c["pos"] == pos), None)
-    if not card:
-        return "BAD_POS", None, None
-    return "OK", m.confirm_text(card["player"]), kb.confirm(offer_id, pos)
-
-
-async def show_offer_again(rt: IplRuntime, user_id: int, offer_id: int) -> tuple[str, str | None, object | None]:
-    st, offer = await _own_open_offer(rt, user_id, offer_id)
-    if st != "OK":
-        return st, None, None
-    team = offer["team"]
-    done = offer["round_no"] - 1
-    return "OK", m.offer_text(team, offer, done, rt.s.draft_seconds), kb.offer(offer_id, offer["candidates"], team["id"])
-
-
 async def confirm_pick(rt: IplRuntime, user_id: int, offer_id: int, pos: int, message_id: int | None) -> dict:
     res = await rt.repo.pick(offer_id, pos, user_id, "USER", rt.s.auto_after_timeouts)
     if res.get("status") == "OK":
@@ -101,7 +81,8 @@ async def after_pick(rt: IplRuntime, res: dict, message_id: int | None, *, auto:
         if not team.get("auto_draft") or not auto:
             text = (m.draft_complete_text(team, players) if res["done"]
                     else m.drafted_text(res["player"], players, auto=auto))
-            await notify.edit_dm(rt, user_id, message_id, text)
+            # Remove previous selection buttons immediately to prevent duplicate clicks
+            await notify.edit_dm(rt, user_id, message_id, text, markup=None)
         if res["done"]:
             from . import batting_order_service
             await batting_order_service.start_batting_order_flow(rt, team, players)

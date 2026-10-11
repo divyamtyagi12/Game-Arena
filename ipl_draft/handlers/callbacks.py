@@ -145,27 +145,21 @@ _OFFER_ERR = {"STALE": "⚠️ This draft round is no longer active.", "NOT_YOUR
 
 
 async def pick(rt, context, q, offer_id: int, pos: int) -> None:
-    st, text, markup = await draft_service.show_confirm(rt, q.from_user.id, offer_id, pos)
-    if st != "OK":
-        return await safe_answer(q, _OFFER_ERR.get(st, "⚠️ Unavailable."), True)
-    await safe_answer(q)
-    await _edit(rt, q, text, markup)
-
-
-async def back(rt, context, q, offer_id: int) -> None:
-    st, text, markup = await draft_service.show_offer_again(rt, q.from_user.id, offer_id)
-    if st != "OK":
-        return await safe_answer(q, _OFFER_ERR.get(st, "⚠️ Unavailable."), True)
-    await safe_answer(q)
-    await _edit(rt, q, text, markup)
-
-
-async def confirm(rt, context, q, offer_id: int, pos: int) -> None:
     res = await draft_service.confirm_pick(rt, q.from_user.id, offer_id, pos, q.message.message_id)
     st = res.get("status")
     if st == "OK":
-        return await safe_answer(q, "✅ Player drafted!")
-    await safe_answer(q, _OFFER_ERR.get(st, "⚠️ That pick could not be made."), True)
+        pl = res.get("player") or {}
+        p_name = pl.get("name") or pl.get("display_name") or "Player"
+        return await safe_answer(q, f"✅ {p_name} selected!")
+    await safe_answer(q, "❌ This selection is already locked.", True)
+
+
+async def back(rt, context, q, offer_id: int) -> None:
+    await safe_answer(q, "❌ This selection is already locked.", True)
+
+
+async def confirm(rt, context, q, offer_id: int, pos: int) -> None:
+    await safe_answer(q, "❌ This selection is already locked.", True)
 
 
 async def my_team(rt, context, q, team_id: int) -> None:
@@ -368,7 +362,7 @@ async def bo_start(rt, context, q, team_id: int, pos: int = 0) -> None:
         return await safe_answer(q, "⚠️ Team roster not found.", True)
     await safe_answer(q)
     text = m.batting_order_prompt(state["players"], state["ordered"], state["remaining"])
-    markup = kb.batting_order_confirm(team_id) if not state["remaining"] else kb.batting_order(team_id, state["remaining"], len(state["ordered"]))
+    markup = kb.batting_order(team_id, state["players"])
     await _edit(rt, q, text, markup)
 
 
@@ -379,9 +373,9 @@ async def bo_pick(rt, context, q, team_id: int, pos: int) -> None:
     if res == "NOT_YOURS":
         return await safe_answer(q, "⚠️ This is not your team.", True)
     if res == "DONE":
-        return await safe_answer(q, "✅ Lineup already confirmed.", True)
+        return await safe_answer(q, "✅ Batting order complete! Squad locked.")
     if res == "ALREADY":
-        return await safe_answer(q, "⚠️ Already assigned.", True)
+        return await safe_answer(q, "⚠️ Already selected in batting order.", True)
     await safe_answer(q)
 
 

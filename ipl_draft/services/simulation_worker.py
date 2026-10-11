@@ -181,23 +181,15 @@ async def _simulate(rt: IplRuntime, t: dict, fx: dict, squads: dict[int, Squad])
         try:
             card = await rt.repo.scorecard(res["match_id"])
             if card:
-                # Build full scorecard pages (rich, detailed)
-                pages = m.full_scorecard_pages(card)
                 for h in humans:
                     uid = h["user_id"]
                     your_team_id = h["id"]
                     mid = dm_msgs.get(uid)
+                    pages = m.format_full_scorecard(card, fx.get("stage", "LEAGUE"), your_team_id)
                     for page_no, page_text in enumerate(pages):
-                        # personalise the last page with win/loss message
-                        if page_no == len(pages) - 1:
-                            winner_id = card.get("winner_team_id")
-                            if winner_id == your_team_id:
-                                page_text += "\n\n🎉 <b>YOU WON!</b>"
-                            elif winner_id is not None:
-                                page_text += "\n\n😔 <b>You lost.</b>"
                         if page_no == 0 and mid:
-                            # edit the placeholder message with page 1
-                            await notify.edit_dm(rt, uid, mid, page_text)
+                            if not await notify.edit_dm(rt, uid, mid, page_text):
+                                await notify.dm(rt, uid, page_text)
                         else:
                             await notify.dm(rt, uid, page_text)
         except Exception:  # noqa: BLE001
@@ -272,7 +264,12 @@ async def _playoff(rt: IplRuntime, t: dict) -> bool:
         return False
     fx = claimed[0]
     teams = {x["id"]: x for x in await rt.repo.all_teams(tid)}
-    await notify.group(rt, t["group_id"], m.playoff_intro(fx["stage"], teams[fx["home"]], teams[fx["away"]]))
+    home_tm = teams.get(fx["home"])
+    away_tm = teams.get(fx["away"])
+    if not home_tm or not away_tm:
+        log.error("Invalid playoff fixture teams: home=%s away=%s", fx.get("home"), fx.get("away"))
+        return False
+    await notify.group(rt, t["group_id"], m.playoff_intro(fx["stage"], home_tm, away_tm))
     await rt.pause(rt.s.playoff_delay / 2)
     res = await _simulate(rt, t, fx, squads)
     if res.get("status") == "OK" and fx["stage"] != "FINAL":

@@ -102,11 +102,12 @@ def confirm_text(player: Mapping) -> str:
 
 
 def drafted_text(player: Mapping, roster: Sequence[Mapping], auto: bool = False) -> str:
-    rows = "\n".join(f"{i + 1}. {esc(p['name'])}" for i, p in enumerate(roster))
-    head = "⏱ <b>TIME UP — PLAYER AUTO-DRAFTED</b>" if auto else "✅ <b>PLAYER DRAFTED!</b>"
-    tail = "\n\n🎲 Generating your next 11 options..." if len(roster) < 11 else ""
-    return (f"{head}\n\n🏏 <b>{esc(player['name'])}</b>\n\n📋 Squad Progress: <b>{len(roster)}/11</b>\n\n"
-            f"<b>YOUR TEAM:</b>\n\n{rows}{tail}")
+    name = esc(player.get("name") or player.get("display_name") or "?")
+    count = len(roster)
+    head = f"⏱ <b>TIME UP — {name} auto-selected!</b>" if auto else f"✅ <b>{name} selected!</b>"
+    return (f"{head}\n\n"
+            f"🏏 <b>Your Squad:</b> {count}/11\n\n"
+            "Proceeding to the next pick...")
 
 
 def my_team_text(team: Mapping, players: Sequence[Mapping], complete: bool) -> str:
@@ -115,11 +116,10 @@ def my_team_text(team: Mapping, players: Sequence[Mapping], complete: bool) -> s
 
 
 def draft_complete_text(team: Mapping, players: Sequence[Mapping]) -> str:
-    rows = "\n".join(f"{i + 1}. {esc(p['name'])}" for i, p in enumerate(players))
-    return (f"🏆 <b>IPL DRAFT COMPLETE!</b>\n\n👑 YOUR SQUAD: <b>{esc(team['name'].upper())}</b>\n\n{rows}\n\n{LINE}\n\n"
-            "✅ SQUAD COMPLETE: <b>11/11</b>\n\n"
-            "🏏 <b>NEXT STEP:</b> Set your batting order!\n"
-            "Your batting-order screen is the next message — choose who bats 1st, 2nd, 3rd… and so on.")
+    name = esc(players[-1].get("name") or players[-1].get("display_name") or "?") if players else "Player"
+    return (f"✅ <b>{name} selected!</b>\n\n"
+            "🏏 <b>Your Squad:</b> 11/11\n\n"
+            "🔒 <b>Squad complete!</b> Proceeding to batting order...")
 
 
 
@@ -287,6 +287,17 @@ def scorecard_pages(sc: Mapping) -> list[str]:
     return pages
 
 
+def resolve_team_name(team: Mapping | None, fallback: str = "Team") -> str:
+    """Safely extracts a valid team name, never returning ?, None, null, or undefined."""
+    if not team or not isinstance(team, Mapping):
+        return fallback
+    for k in ("name", "short_name", "team_name"):
+        v = team.get(k)
+        if v and str(v).strip() not in ("?", "None", "null", "undefined", ""):
+            return str(v).strip()
+    return fallback
+
+
 def full_scorecard_pages(c: Mapping) -> list[str]:
     """Rich automatic DM scorecard — no buttons.
     Format matches:  header / innings 1 / innings 2 / result+winner
@@ -297,17 +308,20 @@ def full_scorecard_pages(c: Mapping) -> list[str]:
     # Resolve team names robustly (team1/team2 or home_team/away_team)
     t1 = c.get("team1") or c.get("home_team") or {}
     t2 = c.get("team2") or c.get("away_team") or {}
-    t1_name = esc(t1.get("name") or t1.get("short_name") or "Team 1")
-    t2_name = esc(t2.get("name") or t2.get("short_name") or "Team 2")
+    t1_name = esc(resolve_team_name(t1, "Team 1"))
+    t2_name = esc(resolve_team_name(t2, "Team 2"))
 
     raw_stage = str(c.get("stage", "LEAGUE"))
     stage = STAGE_LABEL.get(raw_stage.removeprefix("PLAYOFF_"), STAGE_LABEL.get(raw_stage, raw_stage.title()))
-    header = (f"🏏 <b>IPL DRAFT — {esc(stage.upper())}</b>\n\n"
+    is_playoff = raw_stage.startswith("PLAYOFF_") or raw_stage in ("QUALIFIER_1", "ELIMINATOR", "QUALIFIER_2", "FINAL")
+    stage_icon = "🏆" if is_playoff else "🏏"
+    header = (f"{stage_icon} <b>IPL DRAFT — {esc(stage.upper())}</b>\n\n"
               f"🔥 <b>{t1_name}</b> vs <b>{t2_name}</b>")
 
     def _innings_block(inn: Mapping) -> str:
         bt = inn.get("batting_team") or {}
-        bat_name = esc((bt.get("name") or bt.get("short_name") or "?").upper())
+        default_bat = t1_name if inn.get("innings_no") == 1 else t2_name
+        bat_name = esc(resolve_team_name(bt, default_bat).upper())
         total = f"{inn['runs']}/{inn['wickets']} ({overs_str(inn['legal_balls'])} ov)"
         block = [f"\n{DIVIDER}\n", f"🏏 <b>{bat_name} — {total}</b>\n"]
 
@@ -367,7 +381,7 @@ def full_scorecard_pages(c: Mapping) -> list[str]:
         result_block += f"\n🎯 <b>BEST BOWLER</b>: {esc(bb['name'])} ({bb['wickets']}/{bb['runs']})"
     if super_over:
         so_txt = " | ".join(
-            f"{i.get('batting_team', {}).get('short_name', '?')}: {i['runs']}/{i['wickets']}"
+            f"{resolve_team_name(i.get('batting_team'), '?')}: {i['runs']}/{i['wickets']}"
             for i in super_over
         )
         result_block += f"\n<i>Super Over: {so_txt}</i>"
@@ -383,6 +397,22 @@ def full_scorecard_pages(c: Mapping) -> list[str]:
             current += block
     pages.append(current)
 
+    return pages
+
+
+def format_full_scorecard(match_data: Mapping, stage: str = "LEAGUE", user_id: int | None = None) -> list[str]:
+    """Single centralized function to format match scorecards for all stages (LEAGUE, QUALIFIER_1,
+    ELIMINATOR, QUALIFIER_2, FINAL). Reused for every match, sent to DM with zero inline buttons."""
+    c = dict(match_data)
+    if stage:
+        c["stage"] = stage
+    pages = full_scorecard_pages(c)
+    if user_id is not None and pages:
+        winner_id = c.get("winner_team_id")
+        if winner_id == user_id:
+            pages[-1] += "\n\n🎉 <b>YOU WON!</b>"
+        elif winner_id is not None:
+            pages[-1] += "\n\n😔 <b>You lost.</b>"
     return pages
 
 
@@ -518,25 +548,26 @@ def status_text(t: Mapping, humans: int, extra: str = "") -> str:
 
 
 # ───────────────────────── batting order ─────────────────────────
-def batting_order_prompt(players: Sequence[Mapping], ordered: Sequence[Mapping], remaining: Sequence[Mapping]) -> str:
+def batting_order_prompt(players: Sequence[Mapping], ordered: Sequence[Mapping], remaining: Sequence[Mapping] = None) -> str:
     """DM screen for the batting order selection flow."""
     done = len(ordered)
-    total = len(players)
-    head = f"🏏 <b>SET YOUR BATTING ORDER ({done}/{total})</b>\n\n"
+    head = f"🏏 <b>SET YOUR BATTING ORDER ({done}/11)</b>\n\nSelected: <b>{done}/11</b>\n\n"
     if ordered:
-        lines = "\n".join(f"  {i + 1}. <b>{esc(p['name'])}</b> {ROLE_EMOJI.get(p['role'], '')}" for i, p in enumerate(ordered))
-        head += f"<b>Confirmed lineup:</b>\n{lines}\n\n"
+        lines = "\n".join(f"{i + 1}. {esc(p['name'])}" for i, p in enumerate(ordered))
+        head += f"<b>Batting Order:</b>\n{lines}\n\n"
+    if remaining is None:
+        ordered_ids = {p.get("id") or p.get("name") for p in ordered}
+        remaining = [p for p in players if (p.get("id") or p.get("name")) not in ordered_ids]
     if remaining:
         head += f"Select <b>batter #{done + 1}</b> from the buttons below:"
-    else:
-        head += "✅ All batters set — press <b>CONFIRM</b> to lock in your lineup."
-    return head
+    return head.strip()
 
 
 def batting_order_confirmed_text(players: Sequence[Mapping]) -> str:
-    rows = "\n".join(f"  {i + 1}. <b>{esc(p['name'])}</b> {ROLE_EMOJI.get(p['role'], '')}" for i, p in enumerate(players))
-    return (f"✅ <b>BATTING ORDER CONFIRMED!</b>\n\n{rows}\n\n"
-            "⏳ Waiting for all teams to be ready… the league will start automatically.")
+    rows = "\n".join(f"{i + 1}. {esc(p['name'])}" for i, p in enumerate(players))
+    return (f"✅ <b>BATTING ORDER COMPLETE</b>\n\n"
+            f"{rows}\n\n"
+            "🔒 <b>Squad Locked!</b>")
 
 
 def batting_order_timeout_text(players: Sequence[Mapping]) -> str:

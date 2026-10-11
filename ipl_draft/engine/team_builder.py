@@ -21,6 +21,30 @@ FRANCHISES = [
 ]
 FRANCHISE_EMOJI = {c: e for c, _, e in FRANCHISES}
 
+# Official predefined 2026 IPL Playing XI squads for the 4 computer-controlled franchises
+SYSTEM_PLAYING_XI: dict[str, list[str]] = {
+    "MI": [
+        "Rohit Sharma", "Ryan Rickelton", "Suryakumar Yadav", "Tilak Varma",
+        "Hardik Pandya", "Will Jacks", "Shardul Thakur", "Trent Boult",
+        "Deepak Chahar", "Jasprit Bumrah", "Mayank Markande",
+    ],
+    "CSK": [
+        "Ruturaj Gaikwad", "Ayush Mhatre", "Sanju Samson", "Shivam Dube",
+        "Dewald Brevis", "MS Dhoni", "Shreyas Gopal", "Akeal Hosein",
+        "Noor Ahmad", "Khaleel Ahmed", "Rahul Chahar",
+    ],
+    "RCB": [
+        "Virat Kohli", "Phil Salt", "Rajat Patidar", "Devdutt Padikkal",
+        "Venkatesh Iyer", "Krunal Pandya", "Tim David", "Romario Shepherd",
+        "Bhuvneshwar Kumar", "Josh Hazlewood", "Yash Dayal",
+    ],
+    "KKR": [
+        "Sunil Narine", "Ajinkya Rahane", "Angkrish Raghuvanshi", "Rahul Tripathi",
+        "Rinku Singh", "Finn Allen", "Ramandeep Singh", "Harshit Rana",
+        "Matheesha Pathirana", "Varun Chakravarthy", "Umran Malik",
+    ],
+}
+
 
 def franchise_payload() -> list[dict]:
     return [{"code": c, "name": n} for c, n, _ in FRANCHISES]

@@ -17,14 +17,9 @@ def open_bot(bot_username: str) -> Markup:
 
 
 def offer(offer_id: int, cands: Sequence[dict], team_id: int) -> Markup:
-    rows = [[Btn(f"{c['pos']}. {c['player']['name']}", callback_data=f"ipl:pk:{offer_id}:{c['pos']}")] for c in cands]
+    rows = [[Btn(c["player"]["name"], callback_data=f"ipl:pk:{offer_id}:{c['pos']}")] for c in cands]
     rows.append([Btn("📋 MY TEAM", callback_data=f"ipl:tm:{team_id}")])
     return Markup(rows)
-
-
-def confirm(offer_id: int, pos: int) -> Markup:
-    return Markup([[Btn("✅ CONFIRM", callback_data=f"ipl:cf:{offer_id}:{pos}")],
-                   [Btn("🔙 BACK", callback_data=f"ipl:bk:{offer_id}")]])
 
 
 def draft_done(team_id: int, tid: int) -> Markup:
@@ -33,31 +28,30 @@ def draft_done(team_id: int, tid: int) -> Markup:
                    [Btn("📋 VIEW MY SQUAD", callback_data=f"ipl:tm:{team_id}")]])
 
 
-def batting_order(team_id: int, remaining: Sequence[dict], ordered_count: int) -> Markup:
-    """Grid of remaining players for the user to pick batting position {ordered_count+1}."""
-    rows = [[Btn(f"{c['pos']}. {c['player']['name']}", callback_data=f"ipl:bop:{team_id}:{c['pos']}")] for c in remaining]
-    control = []
-    if ordered_count > 0:
-        control.append(Btn("↩️ UNDO", callback_data=f"ipl:bou:{team_id}"))
-        control.append(Btn("🔄 RESET", callback_data=f"ipl:bor:{team_id}"))
-    if control:
-        rows.append(control)
-    if not remaining:
-        rows.append([Btn("✅ CONFIRM ORDER", callback_data=f"ipl:boc:{team_id}")])
+def confirm(offer_id: int, pos: int) -> Markup:
+    return Markup([[Btn("✅ CONFIRM", callback_data=f"ipl:cf:{offer_id}:{pos}")]])
+
+
+def batting_order(team_id: int, players: Sequence[dict]) -> Markup:
+    """All player buttons remain visible. Selected players display a ✅ checkmark.
+    Zero reset, zero undo, zero confirm buttons."""
+    rows = []
+    for p in players:
+        is_selected = p.get("batting_order") is not None
+        p_name = p.get("name") or p.get("display_name") or "Player"
+        label = f"✅ {p_name}" if is_selected else p_name
+        slot = p.get("slot") or p.get("pos", 1)
+        rows.append([Btn(label, callback_data=f"ipl:bop:{team_id}:{slot}")])
     return Markup(rows)
 
 
 def batting_order_confirm(team_id: int) -> Markup:
-    return Markup([[Btn("✅ CONFIRM BATTING ORDER", callback_data=f"ipl:boc:{team_id}")],
-                   [Btn("🔄 RESET", callback_data=f"ipl:bor:{team_id}")]])
+    return Markup([[Btn("✅ CONFIRM BATTING ORDER", callback_data=f"ipl:boc:{team_id}")]])
 
 
-def dm_match_card_buttons(tid: int, match_id: int) -> Markup:
-    """Buttons on the DM match result card: Full Scorecard, Next Match, Points Table, Tournament Progress."""
-    return Markup([
-        [Btn("📋 FULL SCORECARD", callback_data=f"ipl:sc:{match_id}:0"), Btn("⏭ NEXT MATCH", callback_data=f"ipl:nx:{tid}")],
-        [Btn("📊 POINTS TABLE", callback_data=f"ipl:tb:{tid}"), Btn("🏆 TOURNAMENT PROGRESS", callback_data=f"ipl:ts:{tid}")]
-    ])
+def dm_match_card_buttons(tid: int, match_id: int) -> Markup | None:
+    """Requirement: Zero buttons on match scorecards sent to DMs."""
+    return None
 
 
 
