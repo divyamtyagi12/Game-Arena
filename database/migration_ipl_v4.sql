@@ -314,3 +314,44 @@ begin
 
   return jsonb_build_object('status', 'OK', 'count', cnt, 'bowl', b_cnt, 'wk', wk_cnt, 'ar', ar_cnt);
 end $$;
+
+-- 6. Updated ipl_create_fixtures (support 6–16 teams: 4 system + 2..8 human)
+create or replace function ipl_create_fixtures(p_tid bigint, p_fixtures jsonb) returns jsonb
+language plpgsql security definer set search_path = public, ipl_private as $$
+declare
+  t ipl_tournaments%rowtype;
+  n int;
+  cnt int;
+  expected int;
+  f jsonb;
+begin
+  select * into t from ipl_tournaments where id = p_tid for update;
+  if not found then return jsonb_build_object('status', 'NOT_FOUND'); end if;
+  if t.state = 'LEAGUE_RUNNING' or exists (select 1 from ipl_fixtures where tournament_id = p_tid) then
+    return jsonb_build_object('status', 'OK', 'already', true);
+  end if;
+  if t.state not in ('FIXTURE_GENERATION', 'FAILED_RECOVERABLE') then
+    return jsonb_build_object('status', 'BAD_STATE', 'state', t.state);
+  end if;
+  select count(*) into n from ipl_tournament_teams where tournament_id = p_tid;
+  -- allow 6–16 teams (4 system + 2..8 human)
+  if n < 6 or n > 16 then return jsonb_build_object('status', 'BAD_TEAM_COUNT', 'teams', n); end if;
+  expected := n * (n - 1);
+  cnt := jsonb_array_length(p_fixtures);
+  if cnt <> expected then return jsonb_build_object('status', 'BAD_FIXTURE_COUNT', 'have', cnt, 'need', expected); end if;
+  for f in select * from jsonb_array_elements(p_fixtures) loop
+    insert into ipl_fixtures (tournament_id, stage, match_no, matchday, leg, home_team_id, away_team_id)
+    values (p_tid, 'LEAGUE', (f->>'match_no')::int, (f->>'matchday')::int, (f->>'leg')::smallint,
+            (f->>'home')::bigint, (f->>'away')::bigint);
+  end loop;
+  if (select count(distinct (least(home_team_id, away_team_id), greatest(home_team_id, away_team_id)))
+        from ipl_fixtures where tournament_id = p_tid) <> n * (n - 1) / 2 then
+    raise exception 'fixture list does not cover every pair';
+  end if;
+  insert into ipl_standings (tournament_id, team_id)
+  select p_tid, id from ipl_tournament_teams where tournament_id = p_tid
+  on conflict (tournament_id, team_id) do nothing;
+  update ipl_tournaments set state = 'LEAGUE_RUNNING', league_started_at = now() where id = p_tid;
+  return jsonb_build_object('status', 'OK', 'fixtures', cnt, 'teams', n);
+end $$;
+

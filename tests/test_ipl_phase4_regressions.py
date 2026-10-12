@@ -265,11 +265,11 @@ class TestPhase4Regressions(unittest.TestCase):
         winner_name = (t1.get("name") if w_id == t1.get("id") else t2.get("name")) or "Winner"
         assert winner_name == "Chennai Super Kings"
 
-    # ── BUG 11: Missing Bot Commands ──────────────────────────────────────────
+    # ── BUG 11: Bot Commands (/iplstats present, /iplresume removed) ─────────
     def test_bug11_bot_commands_include_iplresume_and_iplstats(self):
-        """Telegram command list includes /iplresume and /iplstats."""
+        """Telegram command list includes /iplstats and excludes deprecated /iplresume."""
         cmds = {cmd.command for cmd in bot.COMMANDS}
-        assert "iplresume" in cmds
+        assert "iplresume" not in cmds
         assert "iplstats" in cmds
 
     # ── BUG 13: Number Wars Value Range (1 to 100) ───────────────────────────

@@ -11,6 +11,7 @@ import asyncio
 import hashlib
 import logging
 import random
+import time
 
 from .. import keyboards as kb
 from ..keyboards import Btn, Markup
@@ -63,16 +64,30 @@ async def advance(rt: IplRuntime, tid: int) -> None:
                 break
             await rt.repo.lease(tid, rt.worker_id, 180)
         rt.failures.pop(tid, None)
+        rt.retry_after.pop(tid, None)
     except Exception as exc:  # noqa: BLE001
         n = rt.failures.get(tid, 0) + 1
         rt.failures[tid] = n
         log.exception("IPL advance failed for tournament %s (%d/%d)", tid, n, rt.s.max_failures)
         await rt.repo.release_claims(tid, rt.worker_id)
+
+        # Exponential backoff for automatic retry
+        backoff = min(60.0, 1.0 * (2 ** min(n - 1, 6)))
+        rt.retry_after[tid] = time.monotonic() + backoff
+        log.info("Tournament %s scheduled for automatic retry in %.1fs (attempt %d/%d)", tid, backoff, n, rt.s.max_failures)
+
         if n >= rt.s.max_failures:
             t = await rt.repo.get(tid)
-            if t and await rt.repo.set_failed(tid, f"{type(exc).__name__}: {exc}"):
-                await notify.group(rt, t["group_id"], "⚠️ <b>IPL Draft paused</b> after repeated errors. "
-                                   "Your progress is saved — a group admin can send /iplresume to continue.")
+            err_msg = f"{type(exc).__name__}: {exc}"
+            if t and await rt.repo.set_failed(tid, err_msg):
+                await notify.group(
+                    rt,
+                    t["group_id"],
+                    f"⚠️ <b>IPL Tournament Paused</b>\n\n"
+                    f"The tournament encountered an unexpected error and paused automatically:\n"
+                    f"<code>{m.esc(err_msg)}</code>\n\n"
+                    f"Tournament progress is saved in the database."
+                )
     finally:
         rt.running.discard(tid)
         try:
@@ -83,16 +98,41 @@ async def advance(rt: IplRuntime, tid: int) -> None:
 
 # ───────────────────────── state handlers (return True = made progress, loop again) ─────────────────────────
 async def _drafting(rt: IplRuntime, t: dict) -> bool:
-    """Waits (returns False) until every human has drafted AND confirmed a batting order and the AI franchises are
-    complete; then makes the one explicit DRAFTING -> SYSTEM_TEAM_GENERATION step in the database.
-    (Regression: this handler used to return True forever without changing the state, so tournaments sat in DRAFTING.)"""
+    """Waits (returns False) until every human has drafted their 11-player squad,
+    verifies squad legality, autofills any unconfirmed batting orders, prepares system teams,
+    and automatically finishes drafting.
+    """
     tid = t["id"]
     prog = await rt.repo.draft_progress(tid)
     if not prog or not all(p["done"] for p in prog):
         return False
-    if await rt.repo.teams_pending_batting_order(tid):
-        return False
+
+    # 1. Verify every human squad contains exactly 11 valid players with all required roles
+    from ..engine.draft_engine import validate_squad_legality
+    all_teams = await rt.repo.all_teams(tid)
+    human_teams = [tm for tm in all_teams if tm.get("kind") == "HUMAN"]
+    for tm in human_teams:
+        roster = await rt.repo.team_roster(tm["id"])
+        players = roster.get("players", []) if roster else []
+        if len(players) != 11:
+            log.warning("Human team %s has %d/11 players; waiting for completion", tm["id"], len(players))
+            return False
+        is_legal, reason = validate_squad_legality(players)
+        if not is_legal:
+            raise RuntimeError(f"Human squad validation failed for team {tm['id']} ({tm.get('name')}): {reason}")
+
+    # 2. Autofill any pending batting orders so human delay never blocks tournament progression
+    pending_bo = await rt.repo.teams_pending_batting_order(tid)
+    for tm in pending_bo:
+        try:
+            await rt.repo.batting_order_autofill(tm["id"])
+        except Exception:
+            log.exception("Failed to autofill batting order for team %s", tm.get("id"))
+
+    # 3. Ensure all system teams are prepared with valid 11-player squads
     await system_service.prepare_system_teams(rt, tid)
+
+    # 4. Finish drafting atomically
     res = await rt.repo.finish_drafting(tid, len(FRANCHISES))
     st = res.get("status")
     if st in ("OK", "ALREADY"):
@@ -107,7 +147,7 @@ async def _system(rt: IplRuntime, t: dict) -> bool:
     await system_service.prepare_system_teams(rt, tid)
     res = await rt.repo.complete_system_teams(tid)
     if res.get("status") not in ("OK", "ALREADY"):
-        raise RuntimeError(f"complete_system_teams: {res}")           # visible to the failure counter, never forced through
+        raise RuntimeError(f"complete_system_teams: {res}")
     if not t.get("system_announced"):
         teams = [x for x in await rt.repo.all_teams(tid) if x["kind"] == "SYSTEM"]
         await notify.set_dashboard(rt, t, m.system_draft_text(teams), kb.teams_ready(tid))
@@ -124,7 +164,15 @@ async def _fixtures(rt: IplRuntime, t: dict) -> bool:
     res = await rt.repo.create_fixtures(tid, fx)
     if res.get("status") != "OK":
         raise RuntimeError(f"create_fixtures: {res}")
-    await notify.group(rt, t["group_id"], f"🏟 <b>IPL DRAFT — LEAGUE BEGINS!</b>\n\n{len(ids)} teams · {len(fx)} matches · every team plays every other team twice.")
+
+    # Automatic tournament start announcement
+    start_msg = (
+        "✅ <b>All squads completed!</b>\n\n"
+        "🏏 <b>IPL Tournament is starting!</b>\n\n"
+        "⚔️ League matches will begin automatically.\n"
+        "🏆 Good luck to all teams!"
+    )
+    await notify.group(rt, t["group_id"], start_msg)
     return True
 
 
@@ -477,9 +525,33 @@ HANDLERS = {
 async def tick(rt: IplRuntime) -> None:
     await draft_service.draft_tick(rt)
     await batting_order_service.batting_order_tick(rt)
+    now = time.monotonic()
+
+    # Active advanceable tournaments
     for t in await rt.repo.by_states(ADVANCEABLE):
-        if t["id"] not in rt.running:
-            rt.ctx.spawn(advance(rt, t["id"]), name=f"ipl-advance-{t['id']}")
+        tid = t["id"]
+        if tid in rt.running:
+            continue
+        if now < rt.retry_after.get(tid, 0.0):
+            continue
+        rt.ctx.spawn(advance(rt, tid), name=f"ipl-advance-{tid}")
+
+    # Recoverable paused tournaments: automatically resume without manual intervention
+    for t in await rt.repo.by_states(["FAILED_RECOVERABLE"]):
+        tid = t["id"]
+        if tid in rt.running:
+            continue
+        if now < rt.retry_after.get(tid, 0.0):
+            continue
+        log.info("IPL auto-recovery: resuming tournament %s (resume_state=%s)", tid, t.get("resume_state"))
+        resumed_state = await rt.repo.resume(tid)
+        if resumed_state:
+            rt.failures.pop(tid, None)
+            rt.retry_after.pop(tid, None)
+            rt.ctx.spawn(advance(rt, tid), name=f"ipl-advance-{tid}")
+        else:
+            rt.retry_after[tid] = now + 60.0
+
     for t in await rt.repo.unannounced_completed():
         rt.ctx.spawn(finalize(rt, t["id"]), name=f"ipl-finalize-{t['id']}")
 
@@ -499,5 +571,9 @@ async def recover(rt: IplRuntime) -> None:
     """Called once on startup: stale claims are re-claimable after 5 minutes, leases expire by themselves, so the normal
     tick resumes everything (drafting offers, system teams, league, playoffs, unannounced results)."""
     await rt.repo.release_stale_reservations()
+    recoverable = await rt.repo.by_states(["FAILED_RECOVERABLE"])
+    for t in recoverable:
+        log.info("IPL recovery: auto-resuming paused tournament %s", t["id"])
+        await rt.repo.resume(t["id"])
     active = await rt.repo.by_states(ADVANCEABLE)
-    log.info("IPL recovery: %d tournament(s) to resume", len(active))
+    log.info("IPL recovery: %d tournament(s) active (+ %d auto-resumed)", len(active), len(recoverable))

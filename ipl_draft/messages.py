@@ -767,7 +767,7 @@ def status_text(t: Mapping, humans: int, extra: str = "") -> str:
               "LEAGUE_COMPLETED": "League completed", "PLAYOFF_ELIMINATOR": "Playoffs — Eliminator",
               "PLAYOFF_QUALIFIER_1": "Playoffs — Qualifier 1", "PLAYOFF_QUALIFIER_2": "Playoffs — Qualifier 2",
               "PLAYOFF_FINAL": "Playoffs — Final", "COMPLETED": "Completed", "CANCELLED": "Cancelled",
-              "FAILED_RECOVERABLE": "⚠️ Paused (an admin can /iplresume)"}
+              "FAILED_RECOVERABLE": "⚠️ Recovering automatically", "BLOCKED": "❌ Blocked"}
     return f"📊 <b>IPL DRAFT — Status</b>\n\nStage: <b>{labels.get(t['state'], t['state'])}</b>\nHuman managers: {humans}{extra}"
 
 

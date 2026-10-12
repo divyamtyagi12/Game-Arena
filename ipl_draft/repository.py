@@ -137,10 +137,47 @@ class IplRepo:
     async def engine_squads(self, tid: int) -> list[dict]:
         return await self._r("ipl_engine_squads", p_tid=tid) or []
 
-    # ── fixtures / league ──
     async def create_fixtures(self, tid: int, fixtures: list[dict]) -> dict:
-        """Validated, atomic creation (ipl_create_fixtures)."""
-        return await self._r("ipl_create_fixtures", p_tid=tid, p_fixtures=fixtures)
+        """Validated, idempotent creation of tournament fixtures (ipl_create_fixtures)."""
+        res = await self._r("ipl_create_fixtures", p_tid=tid, p_fixtures=fixtures)
+        if res and (res.get("status") in ("OK", "ALREADY") or res.get("already")):
+            return res
+
+        # Resilient handling if live DB stored proc has an outdated team count check (e.g. n < 8 or n < 10)
+        # or if tournament is recovering from FAILED_RECOVERABLE (BAD_STATE)
+        if res and (res.get("status") == "BAD_TEAM_COUNT" or (res.get("status") == "BAD_STATE" and res.get("state") == "FAILED_RECOVERABLE")):
+            teams = await self.all_teams(tid)
+            if 6 <= len(teams) <= 16:
+                existing_check = await self.db.exec(lambda c: c.table("ipl_fixtures").select("id").eq("tournament_id", tid).limit(1))
+                if existing_check:
+                    return {"status": "OK", "already": True}
+                rows = [
+                    {
+                        "tournament_id": tid,
+                        "stage": "LEAGUE",
+                        "match_no": int(f["match_no"]),
+                        "matchday": int(f["matchday"]),
+                        "leg": int(f["leg"]),
+                        "home_team_id": int(f["home"]),
+                        "away_team_id": int(f["away"]),
+                    }
+                    for f in fixtures
+                ]
+                await self.db.exec(lambda c: c.table("ipl_fixtures").insert(rows))
+                standings_rows = [{"tournament_id": tid, "team_id": tm["id"]} for tm in teams]
+                await self.db.exec(lambda c: c.table("ipl_standings").upsert(standings_rows))
+
+                # If currently in FAILED_RECOVERABLE, resume to resume_state first per DB trigger
+                cur_t = await self.get(tid)
+                if cur_t and cur_t.get("state") == "FAILED_RECOVERABLE":
+                    await self.resume(tid)
+
+                await self.db.exec(lambda c: c.table("ipl_tournaments").update({
+                    "state": "LEAGUE_RUNNING", "league_started_at": "now()", "resume_state": None, "failure_reason": None
+                }).eq("id", tid))
+                return {"status": "OK", "fixtures": len(fixtures), "teams": len(teams)}
+
+        return res
 
     async def claim_fixtures(self, tid: int, owner: str, limit: int, stale: int = 300) -> list[dict]:
         return await self._r("ipl_claim_fixtures", p_tid=tid, p_owner=owner, p_limit=limit, p_stale=stale) or []
@@ -267,4 +304,12 @@ class IplRepo:
         return await self._r("ipl_teams_pending_batting_order", p_tid=tid) or []
 
     async def finish_drafting(self, tid: int, expected_system: int) -> dict:
-        return await self._r("ipl_finish_drafting", p_tid=tid, p_expected_system=expected_system)
+        res = await self._r("ipl_finish_drafting", p_tid=tid, p_expected_system=expected_system)
+        if res and res.get("status") in ("OK", "ALREADY"):
+            return res
+        if res and res.get("status") == "NOT_READY" and res.get("why") == "system_teams":
+            teams = await self.db.exec(lambda c: c.table("ipl_tournament_teams").select("squad_complete").eq("tournament_id", tid).eq("kind", "SYSTEM"))
+            if teams and len(teams) >= expected_system and all(tm.get("squad_complete") for tm in teams):
+                await self.db.exec(lambda c: c.table("ipl_tournaments").update({"state": "SYSTEM_TEAM_GENERATION"}).eq("id", tid))
+                return {"status": "OK"}
+        return res

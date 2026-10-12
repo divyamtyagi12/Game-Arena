@@ -1,4 +1,4 @@
-"""IPL slash commands: /ipl /iplrules /iplteam /ipltable /iplfixtures /iplhistory /iplresume /iplstats."""
+"""IPL slash commands: /ipl /iplrules /iplteam /ipltable /iplfixtures /iplhistory /iplstats."""
 from __future__ import annotations
 
 import logging
@@ -119,22 +119,6 @@ async def iplhistory_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await msg.reply_html("No IPL matches yet.")
 
 
-async def iplresume_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    rt = get_rt(context)
-    chat, user, msg = update.effective_chat, update.effective_user, update.effective_message
-    if chat.type not in GROUP_TYPES:
-        return await msg.reply_html("ℹ️ Use /iplresume in the group whose tournament paused.")
-    t = await rt.repo.active_for_group(chat.id)
-    if not t or t["state"] != "FAILED_RECOVERABLE":
-        return await msg.reply_html("There is no paused IPL tournament here.")
-    if user.id != t["host_id"] and not await is_admin(context.bot, chat.id, user.id):
-        return await msg.reply_html("❌ Only the host/admin can resume it.")
-    back_to = await rt.repo.resume(t["id"])
-    if not back_to:
-        return await msg.reply_html("⚠️ Could not resume.")
-    rt.failures.pop(t["id"], None)
-    rt.ctx.spawn(simulation_worker.advance(rt, t["id"]), name=f"ipl-resume-{t['id']}")
-    await msg.reply_html("▶️ Resuming the IPL tournament…")
 
 
 async def iplstats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

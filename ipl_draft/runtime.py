@@ -29,6 +29,7 @@ class IplRuntime:
     kicked: set[int] = field(default_factory=set)
     progress_pending: set[int] = field(default_factory=set)
     progress_last: dict[int, float] = field(default_factory=dict)
+    retry_after: dict[int, float] = field(default_factory=dict)
     sleep: Any = None                          # injectable (tests set a no-op)
 
     @classmethod

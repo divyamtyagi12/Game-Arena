@@ -44,7 +44,6 @@ COMMANDS = [
     BotCommand("ipltable", "IPL Draft: points table"),
     BotCommand("iplfixtures", "IPL Draft: fixtures"),
     BotCommand("iplhistory", "IPL Draft: match history"),
-    BotCommand("iplresume", "IPL Draft: resume a paused tournament (host/admin)"),
     BotCommand("iplstats", "IPL Draft: your stats & career record"),
     BotCommand("stats", "Your stats in all games"),
 ]
@@ -105,7 +104,7 @@ def register_handlers(app: Application) -> None:
     for name, fn in (("ipl", ipl_commands.ipl_command), ("iplrules", ipl_commands.iplrules_command),
                      ("iplteam", ipl_commands.iplteam_command), ("ipltable", ipl_commands.ipltable_command),
                      ("iplfixtures", ipl_commands.iplfixtures_command), ("iplhistory", ipl_commands.iplhistory_command),
-                     ("iplresume", ipl_commands.iplresume_command), ("iplstats", ipl_commands.iplstats_command)):
+                     ("iplstats", ipl_commands.iplstats_command)):
         app.add_handler(CommandHandler(name, fn))
     app.add_handler(CommandHandler("stats", arena.stats_command))
     app.add_handler(CallbackQueryHandler(ipl_callbacks.ipl_callback, pattern=r"^ipl:"))
