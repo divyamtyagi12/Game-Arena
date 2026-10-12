@@ -141,6 +141,13 @@ class IplRepo:
         """Validated, idempotent creation of tournament fixtures (ipl_create_fixtures)."""
         res = await self._r("ipl_create_fixtures", p_tid=tid, p_fixtures=fixtures)
         if res and (res.get("status") in ("OK", "ALREADY") or res.get("already")):
+            cur_t = await self.get(tid)
+            if cur_t and cur_t.get("state") in ("FIXTURE_GENERATION", "FAILED_RECOVERABLE"):
+                if cur_t.get("state") == "FAILED_RECOVERABLE":
+                    await self.resume(tid)
+                await self.db.exec(lambda c: c.table("ipl_tournaments").update({
+                    "state": "LEAGUE_RUNNING", "league_started_at": "now()", "resume_state": None, "failure_reason": None
+                }).eq("id", tid))
             return res
 
         # Resilient handling if live DB stored proc has an outdated team count check (e.g. n < 8 or n < 10)
