@@ -69,7 +69,7 @@ async def _own_open_offer(rt: IplRuntime, user_id: int, offer_id: int) -> tuple[
 
 
 async def confirm_pick(rt: IplRuntime, user_id: int, offer_id: int, pos: int, message_id: int | None) -> dict:
-    from ..engine.draft_engine import is_role_pick_allowed, still_required_text
+    from ..engine.draft_engine import is_pick_legal, still_required_text
     offer = None
     if hasattr(rt.repo, "get_offer") and callable(rt.repo.get_offer):
         res_o = rt.repo.get_offer(offer_id)
@@ -82,9 +82,9 @@ async def confirm_pick(rt: IplRuntime, user_id: int, offer_id: int, pos: int, me
         cand = next((c for c in cands if c.get("pos") == pos or c.get("position") == pos), None)
         if cand:
             p = cand.get("player") or {}
-            role = p.get("role")
-            if role and not is_role_pick_allowed(players, role):
+            if not is_pick_legal(players, p):
                 req = still_required_text(players)
+                role = p.get("role", "this player")
                 return {"status": "ROLE_REQUIRED", "message": f"⚠️ Cannot pick {role}! Still required: {req}."}
 
     res = await rt.repo.pick(offer_id, pos, user_id, "USER", rt.s.auto_after_timeouts)
@@ -128,6 +128,8 @@ async def draft_tick(rt: IplRuntime) -> None:
             res = await rt.repo.pick(due["offer_id"], pos, due.get("user_id") or 0, mode, rt.s.auto_after_timeouts)
             if res.get("status") == "OK":
                 await after_pick(rt, res, due.get("dm_message_id"), auto=True)
+            else:
+                log.error("IPL auto-pick returned non-OK status %s for offer %s", res, due.get("offer_id"))
         except Exception:  # noqa: BLE001
             log.exception("IPL auto-pick failed for offer %s", due.get("offer_id"))
     for t in await rt.repo.by_states(["DRAFTING"]):

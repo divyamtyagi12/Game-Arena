@@ -165,8 +165,19 @@ async def _simulate(rt: IplRuntime, t: dict, fx: dict, squads: dict[int, Squad])
                 return {"status": "INVALID_SYSTEM_SQUAD", "team_id": tm["id"]}
             ok, reason = validate_system_team_squad(tm["id"], sq.players, code)
             if not ok:
-                log.error("SYSTEM SQUAD VALIDATION FAILED for team %s (%s): %s", tm["id"], code, reason)
-                return {"status": "INVALID_SYSTEM_SQUAD", "reason": reason, "team_id": tm["id"]}
+                log.warning("SYSTEM SQUAD VALIDATION FAILED for team %s (%s): %s — attempting repair", tm["id"], code, reason)
+                try:
+                    await system_service.prepare_system_teams(rt, tid)
+                    rt.squads.pop(tid, None)
+                    fresh_squads = await get_squads(rt, tid)
+                    sq = fresh_squads.get(side)
+                    if sq and sq.players:
+                        ok, reason = validate_system_team_squad(tm["id"], sq.players, code)
+                except Exception:
+                    log.exception("Failed to repair system team %s (%s)", tm["id"], code)
+                if not ok:
+                    log.error("SYSTEM SQUAD VALIDATION FAILED for team %s (%s): %s", tm["id"], code, reason)
+                    return {"status": "INVALID_SYSTEM_SQUAD", "reason": reason, "team_id": tm["id"]}
 
     rng, seed = match_rng(rt, tid, fx["id"], t.get("draft_started_at"))
     out = simulate_match(squads[fx["home"]], squads[fx["away"]], rng, seed=seed)
@@ -227,7 +238,10 @@ async def _league(rt: IplRuntime, t: dict) -> bool:
             raise RuntimeError(f"complete_league: {res}")
         return True
     for fx in claimed:
-        await _simulate(rt, t, fx, squads)
+        res = await _simulate(rt, t, fx, squads)
+        if res.get("status") not in ("OK", "ALREADY"):
+            log.error("League fixture %s failed: %s", fx.get("id"), res)
+            raise RuntimeError(f"Simulation failed for league fixture {fx.get('id')}: {res.get('status')} ({res.get('reason', '')})")
     # Fix 1 & 2: Do NOT post intermediate matchday summaries or points tables to group
     await rt.pause(rt.s.matchday_delay)
     return True
@@ -281,7 +295,7 @@ async def update_group_tournament_summary(rt: IplRuntime, t: dict) -> None:
         w_id = card.get("winner_team_id")
         t1 = card.get("team1") or {}
         t2 = card.get("team2") or {}
-        winner_name = t1.get("name") if w_id == t1.get("id") else t2.get("name") or "Winner"
+        winner_name = (t1.get("name") if w_id == t1.get("id") else t2.get("name")) or "Winner"
         inn = card.get("innings") or []
         inn1_score = f"{inn[0]['runs']}/{inn[0]['wickets']}" if len(inn) > 0 else "0/0"
         inn2_score = f"{inn[1]['runs']}/{inn[1]['wickets']}" if len(inn) > 1 else "0/0"
@@ -314,18 +328,25 @@ async def update_group_tournament_summary(rt: IplRuntime, t: dict) -> None:
 
 async def _league_completed(rt: IplRuntime, t: dict) -> bool:
     tid = t["id"]
+    fresh_t = await rt.repo.get(tid) or t
     standings = await rt.repo.standings(tid)
-    # Message 1 pops: Points Table
-    await notify.group(rt, t["group_id"], m.format_group_points_table(standings))
-    # Message 2 pops: Playoff structure
-    await notify.group(rt, t["group_id"], m.playoff_structure_text())
 
-    rank = {r["team_id"]: r["rank"] for r in standings}
-    for tm in await rt.repo.all_teams(tid):
-        if tm["kind"] == "HUMAN":
-            r = rank.get(tm["id"])
-            tail = "🔥 You're in the playoffs!" if r and r <= 4 else "Better luck next time!"
-            await notify.dm(rt, tm["user_id"], f"🏟 <b>League stage finished</b>\n\n{m.esc(tm['name'])} finished <b>#{r}</b>. {tail}")
+    if not fresh_t.get("league_summary_posted"):
+        # Message 1 pops: Points Table
+        await notify.group(rt, t["group_id"], m.format_group_points_table(standings))
+        # Message 2 pops: Playoff structure
+        await notify.group(rt, t["group_id"], m.playoff_structure_text())
+        await rt.repo.update(tid, league_summary_posted=True)
+
+    if not fresh_t.get("league_dms_sent"):
+        rank = {r["team_id"]: r["rank"] for r in standings}
+        for tm in await rt.repo.all_teams(tid):
+            if tm["kind"] == "HUMAN":
+                r = rank.get(tm["id"])
+                tail = "🔥 You're in the playoffs!" if r and r <= 4 else "Better luck next time!"
+                await notify.dm(rt, tm["user_id"], f"🏟 <b>League stage finished</b>\n\n{m.esc(tm['name'])} finished <b>#{r}</b>. {tail}")
+        await rt.repo.update(tid, league_dms_sent=True)
+
     await rt.pause(rt.s.playoff_delay)
     return await rt.repo.begin_playoffs(tid)
 
@@ -345,6 +366,10 @@ async def _playoff(rt: IplRuntime, t: dict) -> bool:
         return False
 
     res = await _simulate(rt, t, fx, squads)
+    if res.get("status") not in ("OK", "ALREADY"):
+        log.error("Playoff fixture %s failed: %s", fx.get("id"), res)
+        raise RuntimeError(f"Simulation failed for playoff fixture {fx.get('id')}: {res.get('status')} ({res.get('reason', '')})")
+
     if res.get("status") == "OK" and res.get("match_id"):
         # Match result message pops into group one by one (Image 1 style)
         card = await rt.repo.scorecard(res["match_id"])
@@ -362,50 +387,82 @@ async def _completed(rt: IplRuntime, t: dict) -> bool:
 
 
 async def finalize(rt: IplRuntime, tid: int) -> None:
-    """Awards + leaderboard + champion announcement. Safe to call repeatedly (stats are recorded exactly once)."""
-    t = await rt.repo.get(tid)
-    if not t or t["state"] != "COMPLETED":
-        return
-    teams = {x["id"]: x for x in await rt.repo.all_teams(tid)}
-    champ, runner = teams.get(t["champion_team_id"]), teams.get(t["runner_up_team_id"])
-    await rt.repo.record_results(tid)
-    if not t.get("final_announced"):
-        await rt.repo.update(tid, final_announced=True)
-        stats = await rt.repo.player_stats(tid)
-        await rt.repo.store_awards(tid, awards_engine.compute_awards(stats, champ, runner))
+    """Awards + leaderboard + champion announcement.
+    Concurrency-safe and retry-durable. State transitions are tracked step-by-step
+    so Telegram deliveries are not repeated on restarts or worker retries.
+    """
+    async with rt.ctx.lock(("ipl-finalize", tid)):
+        t = await rt.repo.get(tid)
+        if not t or t["state"] != "COMPLETED":
+            return
+        if t.get("final_announced"):
+            return
 
-        # Champion announcement pops into group
-        if champ:
-            await notify.group(rt, t["group_id"], f"👑 <b>{m.esc(champ['name'])} are CHAMPIONS! 🏆🎉</b>")
+        # Atomic database lease to ensure only one worker across processes finalizes
+        if not await rt.repo.lease(tid, rt.worker_id, 120):
+            return
 
-        # Tournament MVPs announcement pops into group
-        mvps = await compute_human_mvps(rt, tid)
-        if mvps and (mvps.get("most_runs") or mvps.get("most_wickets")):
-            await notify.group(rt, t["group_id"], m.format_mvps_text(mvps))
+        try:
+            teams = {x["id"]: x for x in await rt.repo.all_teams(tid)}
+            champ = teams.get(t.get("champion_team_id"))
+            runner = teams.get(t.get("runner_up_team_id"))
 
-        for tm in teams.values():
-            if tm["kind"] == "HUMAN":
-                won = champ and tm["id"] == champ["id"]
-                await notify.dm(rt, tm["user_id"], ("🏆 <b>YOU ARE THE IPL DRAFT CHAMPION!</b>" if won else
-                                                    f"🏁 IPL Draft finished — champion: <b>{m.esc(champ['name']) if champ else '?'}</b>."))
+            # Step 1: Record results (idempotent in SQL)
+            await rt.repo.record_results(tid)
 
-                try:
-                    roster_data = await rt.repo.team_roster(tm["id"])
-                    squad_players = roster_data.get("players", []) if roster_data else []
-                    bo_state = await rt.repo.get_batting_order_state(tm["id"])
-                    if bo_state and bo_state.get("ordered") and len(bo_state["ordered"]) == 11:
-                        squad_players = bo_state["ordered"]
-                    elif squad_players:
-                        squad_players = sorted(
-                            squad_players,
-                            key=lambda p: (p.get("batting_order") is None, p.get("batting_order", 99), p.get("slot", 99))
-                        )
-                    if squad_players:
-                        perf_text = m.squad_performance_text(squad_players, stats)
-                        await notify.dm(rt, tm["user_id"], perf_text)
-                except Exception:
-                    log.exception("Failed to send squad performance DM to user %s (team %s)", tm.get("user_id"), tm.get("id"))
-        await rt.repo.update(tid, final_announced=True)
+            # Step 2: Calculate and persist awards before announcements
+            stats = await rt.repo.player_stats(tid)
+            if not t.get("awards_recorded"):
+                computed_awards = awards_engine.compute_awards(stats, champ, runner)
+                await rt.repo.store_awards(tid, computed_awards)
+                await rt.repo.update(tid, awards_recorded=True)
+
+            # Step 3: Champion announcement (deliver once)
+            if champ and not t.get("champion_announced"):
+                await notify.group(rt, t["group_id"], f"👑 <b>{m.esc(champ['name'])} are CHAMPIONS! 🏆🎉</b>")
+                await rt.repo.update(tid, champion_announced=True)
+
+            # Step 4: Tournament MVPs announcement (deliver once)
+            if not t.get("mvp_announced"):
+                mvps = await compute_human_mvps(rt, tid)
+                if mvps and (mvps.get("most_runs") or mvps.get("most_wickets")):
+                    await notify.group(rt, t["group_id"], m.format_mvps_text(mvps))
+                await rt.repo.update(tid, mvp_announced=True)
+
+            # Step 5: Human manager performance DMs (deliver once)
+            if not t.get("final_dms_sent"):
+                for tm in teams.values():
+                    if tm["kind"] == "HUMAN":
+                        won = champ and tm["id"] == champ["id"]
+                        await notify.dm(rt, tm["user_id"], ("🏆 <b>YOU ARE THE IPL DRAFT CHAMPION!</b>" if won else
+                                                            f"🏁 IPL Draft finished — champion: <b>{m.esc(champ['name']) if champ else '?'}</b>."))
+                        try:
+                            roster_data = await rt.repo.team_roster(tm["id"])
+                            squad_players = roster_data.get("players", []) if roster_data else []
+                            bo_state = await rt.repo.get_batting_order_state(tm["id"])
+                            if bo_state and bo_state.get("ordered") and len(bo_state["ordered"]) == 11:
+                                squad_players = bo_state["ordered"]
+                            elif squad_players:
+                                squad_players = sorted(
+                                    squad_players,
+                                    key=lambda p: (p.get("batting_order") is None, p.get("batting_order", 99), p.get("slot", 99))
+                                )
+                            if squad_players:
+                                perf_text = m.squad_performance_text(squad_players, stats)
+                                await notify.dm(rt, tm["user_id"], perf_text)
+                        except Exception:
+                            log.exception("Failed to send squad performance DM to user %s (team %s)", tm.get("user_id"), tm.get("id"))
+                await rt.repo.update(tid, final_dms_sent=True)
+
+            # Step 6: Mark finalization complete
+            await rt.repo.update(tid, final_announced=True)
+            await update_group_tournament_summary(rt, t)
+
+        finally:
+            try:
+                await rt.repo.release_lease(tid, rt.worker_id)
+            except Exception:
+                pass
 
 
 HANDLERS = {

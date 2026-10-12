@@ -59,7 +59,7 @@ def lobby_text(t: Mapping, teams: Sequence[Mapping]) -> str:
         "🏏 Squad Size: <b>11 Players</b>\n\n🎲 Draft System:\n<b>11 Random Choices Per Pick</b>\n\n"
         "🏆 Tournament:\n<b>Double Round Robin + IPL Playoffs</b>\n\n"
         f"{LINE}\n\n👥 <b>JOINED PLAYERS</b>\n\n" + "\n".join(rows) + f"\n\n{LINE}"
-        f"\n<i>Minimum {t['min_humans']} players · only group admins can force-start</i>" + status)
+        f"\n<i>Minimum {t['min_humans']} players · host or group admins can force-start</i>" + status)
 
 
 def rules_text(draft_seconds: int = 45) -> str:
@@ -67,8 +67,8 @@ def rules_text(draft_seconds: int = 45) -> str:
         "📖 <b>IPL DRAFT — RULES</b>\n\n"
         "👥 2–8 human managers + <b>4 system franchises</b> (RCB 🔴, KKR 🟣, MI 🔵, CSK 🟡).\n\n"
         f"🎲 <b>Draft (in your DM):</b> 11 rounds. Each round you get <b>11 random IPL cricketers</b> — pick exactly "
-        f"<b>one</b> ({draft_seconds}s; if you're slow one is picked for you). No role restrictions: all batters is allowed… "
-        "but the match engine will notice.\n\n"
+        f"<b>one</b> ({draft_seconds}s; if you're slow one is picked for you).\n\n"
+        "🏏 <b>Squad Constraints:</b> Exactly 11 players — minimum 3 bowlers, minimum 1 wicketkeeper, minimum 1 all-rounder.\n\n"
         "🔒 Nobody else can be offered the cricketers you're choosing from, and nobody can draft the same player twice.\n\n"
         "🏏 <b>Batting Order:</b> After your squad is complete, you'll set your batting lineup (1-11) via DM.\n"
         "If you time out, a smart order is auto-assigned.\n\n"

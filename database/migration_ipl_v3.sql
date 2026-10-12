@@ -71,8 +71,27 @@ $$;
 -- offers: only the manager's OWN squad is excluded (players on other teams stay draftable). No cross-team reservations.
 create or replace function ipl_open_offer(p_team_id bigint, p_force_roles jsonb default null)
 returns jsonb language plpgsql security definer set search_path = public, ipl_private as $$
-declare tm ipl_tournament_teams%rowtype; t ipl_tournaments%rowtype; o ipl_draft_offers%rowtype;
-        n int; ids uuid[]; extra uuid; dl timestamptz; oid bigint;
+declare
+  tm ipl_tournament_teams%rowtype;
+  t ipl_tournaments%rowtype;
+  o ipl_draft_offers%rowtype;
+  n int;
+  ids uuid[];
+  dl timestamptz;
+  oid bigint;
+  b_cnt int;
+  wk_cnt int;
+  ar_cnt int;
+  b_need int;
+  wk_need int;
+  ar_need int;
+  tot_needed int;
+  picks_left int;
+  picks_left_after int;
+  legal_ids uuid[];
+  other_ids uuid[];
+  target_legal int;
+  avail_cnt int;
 begin
   select * into tm from ipl_tournament_teams where id = p_team_id;
   if not found then return jsonb_build_object('status', 'NO_TEAM'); end if;
@@ -85,34 +104,83 @@ begin
     return ipl_offer_json(o.id) || jsonb_build_object('status', 'OPEN', 'picks_done', o.round_no - 1);
   end if;
 
-  select count(*) into n from ipl_draft_picks where team_id = p_team_id;
+  select count(*) into n from ipl_team_rosters where team_id = p_team_id;
   if n >= 11 then return jsonb_build_object('status', 'DONE', 'picks_done', n); end if;
 
-  select array_agg(id) into ids from (
+  picks_left := 11 - n;
+  picks_left_after := picks_left - 1;
+
+  -- Calculate current roster counts
+  select count(*) filter (where p.role = 'BOWL'),
+         count(*) filter (where p.role = 'WK'),
+         count(*) filter (where p.role = 'AR')
+    into b_cnt, wk_cnt, ar_cnt
+    from ipl_team_rosters r
+    join ipl_players p on p.id = r.player_id
+   where r.team_id = p_team_id;
+
+  b_need := greatest(0, 3 - b_cnt);
+  wk_need := greatest(0, 1 - wk_cnt);
+  ar_need := greatest(0, 1 - ar_cnt);
+  tot_needed := b_need + wk_need + ar_need;
+
+  -- Collect all available legal players for this team from tournament pool
+  select array_agg(id) into legal_ids from (
+    select pl.player_id as id
+      from ipl_tournament_pool pl
+      join ipl_players p on p.id = pl.player_id
+     where pl.tournament_id = t.id
+       and not exists (select 1 from ipl_team_rosters r where r.team_id = p_team_id and r.player_id = pl.player_id)
+       and (
+         -- Feasibility: picking this role leaves enough remaining picks to fulfill outstanding requirements
+         picks_left_after >= (
+           greatest(0, b_need - (case when p.role = 'BOWL' then 1 else 0 end)) +
+           greatest(0, wk_need - (case when p.role = 'WK' then 1 else 0 end)) +
+           greatest(0, ar_need - (case when p.role = 'AR' then 1 else 0 end))
+         )
+       )
+     order by random()
+  ) s;
+
+  if legal_ids is null or cardinality(legal_ids) = 0 then
+    select count(*) into avail_cnt
+      from ipl_tournament_pool pl
+     where pl.tournament_id = t.id
+       and not exists (select 1 from ipl_team_rosters r where r.team_id = p_team_id and r.player_id = pl.player_id);
+    return jsonb_build_object('status', 'NO_LEGAL_PLAYERS', 'available', coalesce(avail_cnt, 0));
+  end if;
+
+  -- Target at least multiple legal candidates: if in tight crunch (picks_left <= tot_needed), offer all legal up to 11
+  target_legal := least(cardinality(legal_ids), case when picks_left <= tot_needed then 11 else 4 end);
+
+  -- Fetch remaining non-legal or other available cards to make total 11 cards
+  select array_agg(id) into other_ids from (
     select pl.player_id as id
       from ipl_tournament_pool pl
      where pl.tournament_id = t.id
        and not exists (select 1 from ipl_team_rosters r where r.team_id = p_team_id and r.player_id = pl.player_id)
-     order by random() limit 11) s;
-  if ids is null or cardinality(ids) < 11 then
-    return jsonb_build_object('status', 'POOL_EXHAUSTED', 'available', coalesce(cardinality(ids), 0));
+       and not (pl.player_id = any(legal_ids[1:target_legal]))
+     order by random() limit (11 - target_legal)
+  ) s;
+
+  ids := legal_ids[1:target_legal] || coalesce(other_ids, '{}'::uuid[]);
+
+  if cardinality(ids) < 11 and cardinality(legal_ids) > target_legal then
+    -- Pad with more legal cards if available
+    ids := ids || legal_ids[(target_legal + 1):least(cardinality(legal_ids), target_legal + (11 - cardinality(ids)))];
   end if;
 
-  if p_force_roles is not null and tm.kind = 'SYSTEM' and not exists (
-       select 1 from ipl_players p where p.id = any(ids) and p.role in (select jsonb_array_elements_text(p_force_roles))) then
-    select pl.player_id into extra
-      from ipl_tournament_pool pl join ipl_players p on p.id = pl.player_id
-     where pl.tournament_id = t.id and p.role in (select jsonb_array_elements_text(p_force_roles))
-       and not exists (select 1 from ipl_team_rosters r where r.team_id = p_team_id and r.player_id = pl.player_id)
-     order by random() limit 1;
-    if extra is not null then ids[11] := extra; end if;
+  if ids is null or cardinality(ids) < 11 then
+    return jsonb_build_object('status', 'POOL_EXHAUSTED', 'available', coalesce(cardinality(ids), 0));
   end if;
 
   dl := now() + make_interval(secs => t.draft_seconds);
   insert into ipl_draft_offers (tournament_id, team_id, round_no, deadline_at)
   values (t.id, p_team_id, n + 1, dl) returning id into oid;
+
   insert into ipl_draft_offer_candidates (offer_id, position, player_id)
     select oid, row_number() over (order by random()), x from unnest(ids) x;
+
   return ipl_offer_json(oid) || jsonb_build_object('status', 'OPEN', 'picks_done', n);
 end $$;
 
@@ -564,33 +632,9 @@ $$;
 -- ══════════════════════════════════════════════════════════════════════
 -- V4 PATCH (appended to v3; safe to re-run)
 --   • Reduce system franchises from 5 → 4 (drop DC / Delhi Capitals)
---   • ipl_finish_drafting: default p_expected_system changed 5 → 4
+--   • ipl_finish_drafting: consolidated in authoritative definition above (default p_expected_system = 4)
 --   • ipl_create_fixtures: allow 6–16 teams (was 7–13) so 4 system + 2 human works
 -- ══════════════════════════════════════════════════════════════════════
-
-create or replace function ipl_finish_drafting(p_tid bigint, p_expected_system int default 4) returns jsonb
-language plpgsql security definer set search_path = public, ipl_private as $$
-declare t ipl_tournaments%rowtype; h_open int; bo_open int; sys_n int; sys_open int;
-begin
-  select * into t from ipl_tournaments where id = p_tid for update;
-  if not found then return jsonb_build_object('status', 'NOT_FOUND'); end if;
-  if t.state in ('SYSTEM_TEAM_GENERATION', 'FIXTURE_GENERATION', 'LEAGUE_RUNNING', 'LEAGUE_COMPLETED', 'PLAYOFF_ELIMINATOR',
-                 'PLAYOFF_QUALIFIER_1', 'PLAYOFF_QUALIFIER_2', 'PLAYOFF_FINAL', 'COMPLETED') then
-    return jsonb_build_object('status', 'ALREADY', 'state', t.state);
-  end if;
-  if t.state <> 'DRAFTING' then return jsonb_build_object('status', 'BAD_STATE', 'state', t.state); end if;
-  select count(*) filter (where not squad_complete), count(*) filter (where not batting_order_confirmed)
-    into h_open, bo_open from ipl_tournament_teams where tournament_id = p_tid and kind = 'HUMAN';
-  if h_open > 0 then return jsonb_build_object('status', 'NOT_READY', 'why', 'humans_drafting', 'teams', h_open); end if;
-  if bo_open > 0 then return jsonb_build_object('status', 'NOT_READY', 'why', 'batting_order', 'teams', bo_open); end if;
-  select count(*), count(*) filter (where not squad_complete) into sys_n, sys_open
-    from ipl_tournament_teams where tournament_id = p_tid and kind = 'SYSTEM';
-  if sys_n < p_expected_system or sys_open > 0 then
-    return jsonb_build_object('status', 'NOT_READY', 'why', 'system_teams', 'have', sys_n, 'incomplete', sys_open);
-  end if;
-  update ipl_tournaments set state = 'SYSTEM_TEAM_GENERATION' where id = p_tid;
-  return jsonb_build_object('status', 'OK');
-end $$;
 
 create or replace function ipl_create_fixtures(p_tid bigint, p_fixtures jsonb) returns jsonb
 language plpgsql security definer set search_path = public, ipl_private as $$
@@ -630,6 +674,8 @@ create or replace function ipl_pick(p_offer_id bigint, p_pos int, p_user_id bigi
 returns jsonb language plpgsql security definer set search_path = public, ipl_private as $$
 declare o ipl_draft_offers%rowtype; tm ipl_tournament_teams%rowtype; t ipl_tournaments%rowtype;
         pid uuid; n int; pl ipl_players%rowtype; humans_left int;
+        b_cnt int; wk_cnt int; ar_cnt int;
+        b_need int; wk_need int; ar_need int; picks_left_after int; new_tot_needed int;
 begin
   select * into o from ipl_draft_offers where id = p_offer_id for update;
   if not found then return jsonb_build_object('status', 'STALE'); end if;
@@ -656,10 +702,33 @@ begin
 
   select c.player_id into pid from ipl_draft_offer_candidates c where c.offer_id = o.id and c.position = p_pos;
   if pid is null then return jsonb_build_object('status', 'BAD_POS'); end if;
+  select * into pl from ipl_players where id = pid;
+
+  select count(*) into n from ipl_team_rosters where team_id = o.team_id;
+  if n >= 11 then return jsonb_build_object('status', 'FULL'); end if;
+
+  picks_left_after := 10 - n;
+
+  -- Strict database validation: verify role feasibility before committing pick
+  select count(*) filter (where p.role = 'BOWL'),
+         count(*) filter (where p.role = 'WK'),
+         count(*) filter (where p.role = 'AR')
+    into b_cnt, wk_cnt, ar_cnt
+    from ipl_team_rosters r
+    join ipl_players p on p.id = r.player_id
+   where r.team_id = o.team_id;
+
+  b_need := greatest(0, 3 - b_cnt - (case when pl.role = 'BOWL' then 1 else 0 end));
+  wk_need := greatest(0, 1 - wk_cnt - (case when pl.role = 'WK' then 1 else 0 end));
+  ar_need := greatest(0, 1 - ar_cnt - (case when pl.role = 'AR' then 1 else 0 end));
+  new_tot_needed := b_need + wk_need + ar_need;
+
+  if picks_left_after < new_tot_needed then
+    return jsonb_build_object('status', 'ILLEGAL_PICK', 'role', pl.role, 'message', 'Picking this player violates squad role constraints');
+  end if;
 
   insert into ipl_draft_picks (tournament_id, team_id, round_no, player_id, offer_id, auto_picked, reason)
   values (o.tournament_id, o.team_id, o.round_no, pid, o.id, p_mode <> 'USER' and p_mode <> 'SYSTEM', p_mode);
-  select count(*) into n from ipl_team_rosters where team_id = o.team_id;
   insert into ipl_team_rosters (tournament_id, team_id, player_id, slot, source)
   values (o.tournament_id, o.team_id, pid, n + 1, case when tm.kind = 'HUMAN' then 'DRAFT' else 'SYSTEM' end);
   delete from ipl_player_reservations where offer_id = o.id;
@@ -674,9 +743,23 @@ begin
     update ipl_tournament_teams set timeouts = timeouts + 1,
            auto_draft = auto_draft or (timeouts + 1 >= p_auto_after) where id = tm.id;
   end if;
-  if n + 1 = 11 then update ipl_tournament_teams set squad_complete = true where id = tm.id; end if;
 
-  select * into pl from ipl_players where id = pid;
+  if n + 1 = 11 then
+    select count(*) filter (where p.role = 'BOWL'),
+           count(*) filter (where p.role = 'WK'),
+           count(*) filter (where p.role = 'AR')
+      into b_cnt, wk_cnt, ar_cnt
+      from ipl_team_rosters r
+      join ipl_players p on p.id = r.player_id
+     where r.team_id = tm.id;
+
+    if b_cnt >= 3 and wk_cnt >= 1 and ar_cnt >= 1 then
+      update ipl_tournament_teams set squad_complete = true where id = tm.id;
+    else
+      raise exception 'Squad complete attempted but role constraints violated for team %: b=%, wk=%, ar=%', tm.id, b_cnt, wk_cnt, ar_cnt;
+    end if;
+  end if;
+
   select count(*) into humans_left from ipl_tournament_teams
    where tournament_id = o.tournament_id and kind = 'HUMAN' and not squad_complete;
 

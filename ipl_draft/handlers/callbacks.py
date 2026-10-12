@@ -57,6 +57,8 @@ async def _edit(rt, q, text: str, markup=None) -> None:
     await safe_edit(rt.ctx, q.message.chat.id, q.message.message_id, text, reply_markup=markup)
 
 
+import inspect
+
 async def ipl_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     rt = get_rt(context)
     q = update.callback_query
@@ -72,15 +74,26 @@ async def ipl_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return await safe_answer(q, "⚠️ Invalid button.")
     if not rt.s.enabled:
         return await safe_answer(q, "⚠️ IPL Draft is currently disabled.", True)
+
+    fn = ROUTES.get(action)
+    if fn is None:
+        return await safe_answer(q, "⚠️ Invalid button.")
+
+    # Explicitly validate callback argument count before execution (Bug 9)
+    sig = inspect.signature(fn)
+    params = list(sig.parameters.values())[3:]  # Skip (rt, context, q)
+    has_varargs = any(p.kind == inspect.Parameter.VAR_POSITIONAL for p in sig.parameters.values())
+    min_args = len([p for p in params if p.default is inspect.Parameter.empty and p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)])
+    max_args = len([p for p in params if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)])
+
+    if len(args) < min_args or (not has_varargs and len(args) > max_args):
+        log.warning("Callback argument mismatch for '%s': expected %d..%d, got %d (%s)", action, min_args, max_args, len(args), q.data)
+        return await safe_answer(q, "⚠️ Invalid button.")
+
     try:
-        fn = ROUTES.get(action)
-        if fn is None:
-            return await safe_answer(q, "⚠️ Invalid button.")
         await fn(rt, context, q, *args)
-    except TypeError:                                    # wrong number of arguments in forged data
-        await safe_answer(q, "⚠️ Invalid button.")
     except Exception:  # noqa: BLE001
-        log.exception("IPL callback failed: %s", q.data)
+        log.exception("IPL callback execution error for data '%s'", q.data)
         await safe_answer(q, "⚠️ Something went wrong. Please try again.")
 
 
@@ -124,8 +137,10 @@ async def force_start(rt, context, q, tid: int) -> None:
     t = await _lobby_t(rt, q, tid)
     if not t:
         return
-    if not await is_admin(context.bot, q.message.chat.id, q.from_user.id):
-        return await safe_answer(q, "❌ Only group admins can force-start.", True)
+    is_host = bool(t.get("host_id") and q.from_user.id == t.get("host_id"))
+    admin = await is_admin(context.bot, q.message.chat.id, q.from_user.id)
+    if not (is_host or admin):
+        return await safe_answer(q, "❌ Only the tournament host or group admins can force-start.", True)
     ok, text = await tournament_service.force_start(rt, tid)
     await safe_answer(q, text[:190], not ok)
     if not ok and text.startswith("⚠️ Can't DM") and rt.bot_username:

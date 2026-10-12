@@ -91,37 +91,8 @@ class IplRepo:
         await self._r("ipl_set_offer_message", p_offer_id=offer_id, p_message_id=message_id)
 
     async def pick(self, offer_id: int, pos: int, user_id: int, mode: str = "USER", auto_after: int = 2) -> dict:
-        res = await self._r("ipl_pick", p_offer_id=offer_id, p_pos=pos, p_user_id=user_id, p_mode=mode,
+        return await self._r("ipl_pick", p_offer_id=offer_id, p_pos=pos, p_user_id=user_id, p_mode=mode,
                              p_auto_after=auto_after)
-        if res and res.get("status") == "CLOSED" and mode == "SYSTEM":
-            # Direct fallback for system pick when SQL stored proc is in DRAFTING state
-            cands = await self.db.exec(lambda c: c.table("ipl_draft_offer_candidates").select("player_id").eq("offer_id", offer_id).eq("position", pos))
-            if cands:
-                pid = cands[0]["player_id"]
-                offers = await self.db.exec(lambda c: c.table("ipl_draft_offers").select("*").eq("id", offer_id))
-                if offers:
-                    o = offers[0]
-                    roster = await self.db.exec(lambda c: c.table("ipl_team_rosters").select("id").eq("team_id", o["team_id"]))
-                    slot = len(roster) + 1
-                    await self.db.exec(lambda c: c.table("ipl_draft_picks").insert({
-                        "tournament_id": o["tournament_id"], "team_id": o["team_id"], "round_no": o["round_no"],
-                        "player_id": pid, "offer_id": offer_id, "auto_picked": False, "reason": "SYSTEM"
-                    }))
-                    await self.db.exec(lambda c: c.table("ipl_team_rosters").insert({
-                        "tournament_id": o["tournament_id"], "team_id": o["team_id"], "player_id": pid,
-                        "slot": slot, "source": "SYSTEM"
-                    }))
-                    await self.db.exec(lambda c: c.table("ipl_draft_offers").update({
-                        "status": "PICKED", "picked_player_id": pid, "resolved_at": "now()"
-                    }).eq("id", offer_id))
-                    if slot == 11:
-                        await self.db.exec(lambda c: c.table("ipl_tournament_teams").update({
-                            "squad_complete": True
-                        }).eq("id", o["team_id"]))
-                    player_rows = await self.db.exec(lambda c: c.table("ipl_players").select("id, slug, full_name, display_name, role, bowling_type").eq("id", pid))
-                    pl = player_rows[0] if player_rows else {"role": "BAT", "bowling_type": "NONE"}
-                    return {"status": "OK", "player": pl, "picks_done": slot, "squad_complete": (slot == 11)}
-        return res
 
     async def due_offers(self, limit: int = 50) -> list[dict]:
         return await self._r("ipl_due_offers", p_limit=limit) or []
@@ -169,27 +140,7 @@ class IplRepo:
     # ── fixtures / league ──
     async def create_fixtures(self, tid: int, fixtures: list[dict]) -> dict:
         """Validated, atomic creation (ipl_create_fixtures)."""
-        res = await self._r("ipl_create_fixtures", p_tid=tid, p_fixtures=fixtures)
-        if res and res.get("status") == "BAD_TEAM_COUNT" and res.get("teams", 0) >= 6:
-            rows = [
-                {
-                    "tournament_id": tid,
-                    "stage": "LEAGUE",
-                    "match_no": int(f["match_no"]),
-                    "matchday": int(f["matchday"]),
-                    "leg": int(f["leg"]),
-                    "home_team_id": int(f["home"]),
-                    "away_team_id": int(f["away"]),
-                }
-                for f in fixtures
-            ]
-            await self.db.exec(lambda c: c.table("ipl_fixtures").insert(rows))
-            teams = await self.db.exec(lambda c: c.table("ipl_tournament_teams").select("id").eq("tournament_id", tid))
-            standings_rows = [{"tournament_id": tid, "team_id": tm["id"]} for tm in teams]
-            await self.db.exec(lambda c: c.table("ipl_standings").upsert(standings_rows))
-            await self.db.exec(lambda c: c.table("ipl_tournaments").update({"state": "LEAGUE_RUNNING", "league_started_at": "now()"}).eq("id", tid))
-            return {"status": "OK", "fixtures": len(fixtures), "teams": len(teams)}
-        return res
+        return await self._r("ipl_create_fixtures", p_tid=tid, p_fixtures=fixtures)
 
     async def claim_fixtures(self, tid: int, owner: str, limit: int, stale: int = 300) -> list[dict]:
         return await self._r("ipl_claim_fixtures", p_tid=tid, p_owner=owner, p_limit=limit, p_stale=stale) or []
@@ -316,10 +267,4 @@ class IplRepo:
         return await self._r("ipl_teams_pending_batting_order", p_tid=tid) or []
 
     async def finish_drafting(self, tid: int, expected_system: int) -> dict:
-        res = await self._r("ipl_finish_drafting", p_tid=tid, p_expected_system=expected_system)
-        if res and res.get("status") == "NOT_READY" and res.get("why") == "system_teams":
-            teams = await self.db.exec(lambda c: c.table("ipl_tournament_teams").select("squad_complete").eq("tournament_id", tid).eq("kind", "SYSTEM"))
-            if teams and len(teams) >= expected_system and all(tm.get("squad_complete") for tm in teams):
-                await self.db.exec(lambda c: c.table("ipl_tournaments").update({"state": "SYSTEM_TEAM_GENERATION"}).eq("id", tid))
-                return {"status": "OK"}
-        return res
+        return await self._r("ipl_finish_drafting", p_tid=tid, p_expected_system=expected_system)

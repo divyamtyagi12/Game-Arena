@@ -57,7 +57,7 @@ create index if not exists idx_nw_rounds_open on nw_rounds(match_id) where statu
 create table if not exists nw_submissions (
   round_id        bigint not null references nw_rounds(id) on delete cascade,
   user_id         bigint not null references users(id),
-  selected_number smallint not null check (selected_number between 0 and 100),
+  selected_number smallint not null check (selected_number between 1 and 100),
   locked_at       timestamptz not null default now(),
   distance        numeric(10,4),
   hp_delta        smallint,
@@ -192,7 +192,7 @@ create or replace function nw_submit(p_round_id bigint, p_user_id bigint, p_numb
 returns jsonb language plpgsql as $$
 declare r nw_rounds%rowtype; ins int; alive_cnt int; sub_cnt int;
 begin
-  if p_number is null or p_number < 0 or p_number > 100 then
+  if p_number is null or p_number < 1 or p_number > 100 then
     return jsonb_build_object('status', 'INVALID');
   end if;
   select * into r from nw_rounds where id = p_round_id for share;

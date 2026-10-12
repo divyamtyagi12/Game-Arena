@@ -194,30 +194,46 @@ def test_system_draft_ready_before_user_draft():
     
     mock_players = []
     for code, squad in SYSTEM_PLAYING_XI.items():
-        for p_name in squad:
+        for idx, p_name in enumerate(squad):
+            role = "WK" if idx == 0 else ("AR" if idx == 1 else ("BOWL" if idx >= 8 else "BAT"))
             mock_players.append({
                 "id": f"pid_{p_name}",
                 "display_name": p_name,
                 "full_name": p_name,
-                "role": "BAT",
-                "bowling_type": None,
+                "role": role,
+                "bowling_type": "RIGHT_FAST" if role == "BOWL" else None,
             })
-    
+
+    persisted_rosters = {}
+
     def fake_db_exec(query_fn):
         mock_client = MagicMock()
         mock_query = MagicMock()
         mock_client.table.return_value = mock_query
         mock_query.select.return_value = mock_query
         mock_query.eq.return_value = mock_query
-        mock_query.insert.return_value = mock_query
+        mock_query.range.return_value = mock_query
+
+        # Track insertions
+        def mock_insert(rows):
+            if rows:
+                tid = rows[0]["team_id"]
+                persisted_rosters[tid] = rows
+            return mock_query
+        mock_query.insert.side_effect = mock_insert
         mock_query.update.return_value = mock_query
-        
+
         # Check what table was queried
         query_fn(mock_client)
         called_table = mock_client.table.call_args[0][0]
         if called_table == "ipl_players":
             return mock_players
         elif called_table == "ipl_team_rosters":
+            # Extract team_id if eq was called
+            eq_calls = [c for c in mock_query.eq.call_args_list if c[0][0] == "team_id"]
+            if eq_calls:
+                tid = eq_calls[-1][0][1]
+                return persisted_rosters.get(tid, [])
             return []
         return []
 

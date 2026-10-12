@@ -726,7 +726,10 @@ end $$;
 create or replace function ipl_set_failed(p_tid bigint, p_reason text) returns boolean
 language plpgsql security definer set search_path = public, ipl_private as $$
 begin
-  update ipl_tournaments set state = 'FAILED_RECOVERABLE', failure_reason = left(p_reason, 500)
+  update ipl_tournaments
+     set resume_state = state,
+         state = 'FAILED_RECOVERABLE',
+         failure_reason = left(p_reason, 500)
    where id = p_tid and state not in ('LOBBY','COMPLETED','CANCELLED','FAILED_RECOVERABLE');
   return found;
 end $$;

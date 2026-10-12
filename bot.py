@@ -44,6 +44,8 @@ COMMANDS = [
     BotCommand("ipltable", "IPL Draft: points table"),
     BotCommand("iplfixtures", "IPL Draft: fixtures"),
     BotCommand("iplhistory", "IPL Draft: match history"),
+    BotCommand("iplresume", "IPL Draft: resume a paused tournament (host/admin)"),
+    BotCommand("iplstats", "IPL Draft: your stats & career record"),
     BotCommand("stats", "Your stats in all games"),
 ]
 
