@@ -39,7 +39,7 @@ ROLE_ICON = {
 
 
 def offer(offer_id: int, cands: Sequence[dict], team_id: int, roster: Sequence[dict] | None = None) -> Markup:
-    from .engine.draft_engine import is_role_pick_allowed
+    from .engine.draft_engine import is_pick_legal
     rows = []
     players = roster or []
     for c in cands:
@@ -52,7 +52,7 @@ def offer(offer_id: int, cands: Sequence[dict], team_id: int, roster: Sequence[d
         label = f"{icon} {name} ({code})" if code else f"{icon} {name}"
         pos = c.get("pos") or c.get("position", 1)
 
-        if is_role_pick_allowed(players, role):
+        if is_pick_legal(players, p):
             cb_data = f"ipl:pk:{offer_id}:{pos}"
         else:
             cb_data = f"ipl:blk:{pos}"

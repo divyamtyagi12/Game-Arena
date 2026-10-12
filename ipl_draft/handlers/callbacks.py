@@ -166,8 +166,16 @@ async def pick(rt, context, q, offer_id: int, pos: int) -> None:
         pl = res.get("player") or {}
         p_name = pl.get("name") or pl.get("display_name") or "Player"
         return await safe_answer(q, f"✅ {p_name} selected!")
-    if st == "ROLE_REQUIRED":
+    if st in ("ROLE_REQUIRED", "ILLEGAL_PICK"):
         return await safe_answer(q, res.get("message", "⚠️ Role required to meet squad minimums!"), True)
+    if st == "ALREADY_HAVE":
+        return await safe_answer(q, res.get("message", "⚠️ This player is already in your squad!"), True)
+    if st == "ALREADY":
+        try:
+            await q.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        return await safe_answer(q, "✅ Pick already recorded!")
     await safe_answer(q, "❌ This selection is already locked.", True)
 
 

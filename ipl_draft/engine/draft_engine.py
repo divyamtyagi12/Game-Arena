@@ -85,6 +85,19 @@ def is_pick_legal(
     the squad with all mandatory requirements (3 bowlers, 1 keeper, 1 all-rounder) within exactly 11 players.
     Accounts for players that satisfy multiple role requirements.
     """
+    # Ensure candidate is not already present in the squad (no duplicates)
+    if isinstance(candidate, Mapping):
+        cand_id = candidate.get("id") or candidate.get("player_id")
+        cand_name = candidate.get("name")
+        for r in roster:
+            if isinstance(r, Mapping):
+                r_id = r.get("id") or r.get("player_id")
+                r_name = r.get("name")
+                if cand_id and r_id and str(cand_id) == str(r_id):
+                    return False
+                if cand_name and r_name and str(cand_name).strip().lower() == str(r_name).strip().lower():
+                    return False
+
     picks_left = SQUAD - len(roster)
     if picks_left <= 0:
         return False

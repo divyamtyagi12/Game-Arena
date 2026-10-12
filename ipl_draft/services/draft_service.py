@@ -89,6 +89,9 @@ async def confirm_pick(rt: IplRuntime, user_id: int, offer_id: int, pos: int, me
 
     res = await rt.repo.pick(offer_id, pos, user_id, "USER", rt.s.auto_after_timeouts)
     if res.get("status") == "OK":
+        if offer:
+            res.setdefault("team_id", offer.get("team_id"))
+            res.setdefault("tournament_id", offer.get("tournament_id"))
         await after_pick(rt, res, message_id, auto=False)
     return res
 
@@ -97,23 +100,46 @@ async def confirm_pick(rt: IplRuntime, user_id: int, offer_id: int, pos: int, me
 
 async def after_pick(rt: IplRuntime, res: dict, message_id: int | None, *, auto: bool) -> None:
     try:
-        roster = await rt.repo.team_roster(res["team_id"])
+        team_id = res.get("team_id")
+        tournament_id = res.get("tournament_id")
+        done = bool(res.get("done", res.get("squad_complete", False)))
+        all_humans_done = bool(
+            res.get("all_humans_done", res.get("humans_drafting") == 0 if "humans_drafting" in res else False)
+        )
+
+        roster = await rt.repo.team_roster(team_id) if team_id else None
+        if not roster:
+            log.error("IPL after_pick: could not load roster for team_id=%s", team_id)
+            return
+
         team, players = roster["team"], roster["players"]
         user_id = team["user_id"]
+        if not tournament_id:
+            tournament_id = team.get("tournament_id")
+
         if not team.get("auto_draft") or not auto:
-            text = (m.draft_complete_text(team, players) if res["done"]
-                    else m.drafted_text(res["player"], players, auto=auto))
-            # Remove previous selection buttons immediately to prevent duplicate clicks
-            await notify.edit_dm(rt, user_id, message_id, text, markup=None)
-        if res["done"]:
+            try:
+                text = (
+                    m.draft_complete_text(team, players)
+                    if done
+                    else m.drafted_text(res.get("player") or {}, players, auto=auto)
+                )
+                # Remove previous selection buttons immediately to prevent duplicate clicks
+                await notify.edit_dm(rt, user_id, message_id, text, markup=None)
+            except Exception:
+                log.exception("IPL: failed to edit previous DM message in after_pick")
+
+        if done:
             from . import batting_order_service
             await batting_order_service.start_batting_order_flow(rt, team, players)
         else:
             await deliver_offer(rt, team)
-        await update_progress(rt, res["tournament_id"], force=bool(res["done"]))
-        if res.get("all_humans_done"):
-            from . import simulation_worker
-            rt.ctx.spawn(simulation_worker.advance(rt, res["tournament_id"]), name=f"ipl-advance-{res['tournament_id']}")
+
+        if tournament_id:
+            await update_progress(rt, tournament_id, force=bool(done))
+            if all_humans_done:
+                from . import simulation_worker
+                rt.ctx.spawn(simulation_worker.advance(rt, tournament_id), name=f"ipl-advance-{tournament_id}")
     except Exception:  # noqa: BLE001  — a display problem must never undo a committed pick
         log.exception("IPL after_pick failed (pick is already saved)")
 

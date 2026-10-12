@@ -69,26 +69,34 @@ class IplRepo:
         return await self._r("ipl_resume", p_tid=tid)
 
     async def lease(self, tid: int, owner: str, seconds: int) -> bool:
-        res = await self._r("ipl_lease", p_tid=tid, p_owner=owner, p_seconds=seconds)
-        if res:
-            return True
-        # Fallback for COMPLETED tournaments: SQL function excludes COMPLETED, so acquire directly via postgrest
+        try:
+            res = await self._r("ipl_lease", p_tid=tid, p_owner=owner, p_seconds=seconds)
+            if res is not None:
+                return bool(res)
+        except Exception:
+            pass
+
+        # Fallback only when RPC fails or is unavailable: atomic conditional update
         try:
             from datetime import datetime, timezone, timedelta
+            now_iso = datetime.now(timezone.utc).isoformat()
             until_iso = (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
             rows = await self.db.exec(
                 lambda c: c.table("ipl_tournaments")
                 .update({"lease_owner": owner, "lease_until": until_iso})
                 .eq("id", tid)
-                .eq("state", "COMPLETED")
-                .eq("final_announced", False)
+                .neq("state", "CANCELLED")
+                .or_(f"lease_owner.is.null,lease_owner.eq.{owner},lease_until.lt.{now_iso}")
             )
             return bool(rows)
         except Exception:
             return False
 
     async def release_lease(self, tid: int, owner: str) -> None:
-        await self._r("ipl_release_lease", p_tid=tid, p_owner=owner)
+        try:
+            await self._r("ipl_release_lease", p_tid=tid, p_owner=owner)
+        except Exception:
+            pass
         try:
             await self.db.exec(
                 lambda c: c.table("ipl_tournaments")
@@ -116,8 +124,31 @@ class IplRepo:
         await self._r("ipl_set_offer_message", p_offer_id=offer_id, p_message_id=message_id)
 
     async def pick(self, offer_id: int, pos: int, user_id: int, mode: str = "USER", auto_after: int = 2) -> dict:
-        return await self._r("ipl_pick", p_offer_id=offer_id, p_pos=pos, p_user_id=user_id, p_mode=mode,
+        res = await self._r("ipl_pick", p_offer_id=offer_id, p_pos=pos, p_user_id=user_id, p_mode=mode,
                              p_auto_after=auto_after)
+        if isinstance(res, dict) and res.get("status") == "OK":
+            if "done" not in res and "squad_complete" in res:
+                res["done"] = res["squad_complete"]
+            if "squad_complete" not in res and "done" in res:
+                res["squad_complete"] = res["done"]
+            if "all_humans_done" not in res and "humans_drafting" in res:
+                res["all_humans_done"] = (res["humans_drafting"] == 0)
+            if "humans_drafting" not in res and "all_humans_done" in res:
+                res["humans_drafting"] = 0 if res["all_humans_done"] else 1
+            if "auto" not in res:
+                res["auto"] = mode in ("TIMEOUT", "AUTO")
+            if "user_id" not in res:
+                res["user_id"] = user_id
+            if "team_id" not in res or "tournament_id" not in res:
+                try:
+                    offer = await self.get_offer(offer_id)
+                    if offer and isinstance(offer, dict):
+                        res.setdefault("team_id", offer.get("team_id"))
+                        res.setdefault("tournament_id", offer.get("tournament_id"))
+                        res.setdefault("round_no", offer.get("round_no"))
+                except Exception:
+                    pass
+        return res
 
     async def due_offers(self, limit: int = 50) -> list[dict]:
         return await self._r("ipl_due_offers", p_limit=limit) or []
