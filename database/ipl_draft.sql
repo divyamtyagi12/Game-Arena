@@ -750,7 +750,8 @@ language plpgsql security definer set search_path = public, ipl_private as $$
 begin
   update ipl_tournaments
      set lease_owner = p_owner, lease_until = now() + make_interval(secs => p_seconds)
-   where id = p_tid and state not in ('COMPLETED','CANCELLED')
+   where id = p_tid
+     and (state not in ('COMPLETED','CANCELLED') or (state = 'COMPLETED' and not coalesce(final_announced, false)))
      and (lease_owner is null or lease_owner = p_owner or lease_until is null or lease_until < now());
   return found;
 end $$;

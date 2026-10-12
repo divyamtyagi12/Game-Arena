@@ -456,34 +456,49 @@ async def finalize(rt: IplRuntime, tid: int) -> None:
             runner = teams.get(t.get("runner_up_team_id"))
 
             # Step 1: Record results (idempotent in SQL)
-            await rt.repo.record_results(tid)
+            try:
+                await rt.repo.record_results(tid)
+            except Exception:
+                log.exception("Failed to record results for tournament %s", tid)
 
             # Step 2: Calculate and persist awards before announcements
             stats = await rt.repo.player_stats(tid)
             if not t.get("awards_recorded"):
-                computed_awards = awards_engine.compute_awards(stats, champ, runner)
-                await rt.repo.store_awards(tid, computed_awards)
-                await rt.repo.update(tid, awards_recorded=True)
+                try:
+                    computed_awards = awards_engine.compute_awards(stats, champ, runner)
+                    await rt.repo.store_awards(tid, computed_awards)
+                    await rt.repo.update(tid, awards_recorded=True)
+                except Exception:
+                    log.exception("Failed to compute/store awards for tournament %s", tid)
 
             # Step 3: Champion announcement (deliver once)
             if champ and not t.get("champion_announced"):
-                await notify.group(rt, t["group_id"], f"👑 <b>{m.esc(champ['name'])} are CHAMPIONS! 🏆🎉</b>")
-                await rt.repo.update(tid, champion_announced=True)
+                try:
+                    await notify.group(rt, t["group_id"], f"👑 <b>{m.esc(champ['name'])} are CHAMPIONS! 🏆🎉</b>")
+                    await rt.repo.update(tid, champion_announced=True)
+                except Exception:
+                    log.exception("Failed to announce champion for tournament %s", tid)
 
             # Step 4: Tournament MVPs announcement (deliver once)
             if not t.get("mvp_announced"):
-                mvps = await compute_human_mvps(rt, tid)
-                if mvps and (mvps.get("most_runs") or mvps.get("most_wickets")):
-                    await notify.group(rt, t["group_id"], m.format_mvps_text(mvps))
-                await rt.repo.update(tid, mvp_announced=True)
+                try:
+                    mvps = await compute_human_mvps(rt, tid)
+                    if mvps and (mvps.get("most_runs") or mvps.get("most_wickets")):
+                        await notify.group(rt, t["group_id"], m.format_mvps_text(mvps))
+                    await rt.repo.update(tid, mvp_announced=True)
+                except Exception:
+                    log.exception("Failed to announce MVPs for tournament %s", tid)
 
             # Step 5: Human manager performance DMs (deliver once)
             if not t.get("final_dms_sent"):
                 for tm in teams.values():
                     if tm["kind"] == "HUMAN":
                         won = champ and tm["id"] == champ["id"]
-                        await notify.dm(rt, tm["user_id"], ("🏆 <b>YOU ARE THE IPL DRAFT CHAMPION!</b>" if won else
-                                                            f"🏁 IPL Draft finished — champion: <b>{m.esc(champ['name']) if champ else '?'}</b>."))
+                        try:
+                            await notify.dm(rt, tm["user_id"], ("🏆 <b>YOU ARE THE IPL DRAFT CHAMPION!</b>" if won else
+                                                                f"🏁 IPL Draft finished — champion: <b>{m.esc(champ['name']) if champ else '?'}</b>."))
+                        except Exception:
+                            log.exception("Failed to send champion/finished DM to user %s (team %s)", tm.get("user_id"), tm.get("id"))
                         try:
                             roster_data = await rt.repo.team_roster(tm["id"])
                             squad_players = roster_data.get("players", []) if roster_data else []
@@ -504,7 +519,10 @@ async def finalize(rt: IplRuntime, tid: int) -> None:
 
             # Step 6: Mark finalization complete
             await rt.repo.update(tid, final_announced=True)
-            await update_group_tournament_summary(rt, t)
+            try:
+                await update_group_tournament_summary(rt, t)
+            except Exception:
+                log.exception("Failed to update group summary for tournament %s", tid)
 
         finally:
             try:

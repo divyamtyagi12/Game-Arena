@@ -324,3 +324,50 @@ class TestIplAutomaticProgression(unittest.IsolatedAsyncioTestCase):
         assert "iplstats" in cmds
         assert "ipltable" in cmds
         assert "iplrules" in cmds
+
+    # ── 12. Finalize Sends Squad Performance DM To Human Managers ──────────
+    async def test_finalize_sends_squad_performance_dm_to_human_managers(self):
+        """Verify squad performance summary (runs, wickets, totals) is sent to human managers on tournament end."""
+        tid = 95
+        t = {
+            "id": tid,
+            "group_id": -1095,
+            "state": "COMPLETED",
+            "champion_team_id": 1,
+            "runner_up_team_id": 2,
+            "final_announced": False,
+            "final_dms_sent": False,
+            "awards_recorded": False,
+            "champion_announced": False,
+            "mvp_announced": False,
+        }
+        self.repo.get = AsyncMock(return_value=t)
+        human_team = {"id": 1, "name": "Dre XI", "kind": "HUMAN", "user_id": 7158623869}
+        self.repo.all_teams = AsyncMock(return_value=[human_team])
+        squad = [
+            {"id": f"p{i}", "name": f"Player {i}", "role": "BAT", "bowling_type": "NONE"} for i in range(1, 12)
+        ]
+        self.repo.team_roster = AsyncMock(return_value={"team": human_team, "players": squad})
+        self.repo.get_batting_order_state = AsyncMock(return_value=None)
+        player_stats = [
+            {"player_id": "p1", "runs": 288, "wickets": 21, "balls": 200, "bowl_runs": 150},
+            {"player_id": "p2", "runs": 293, "wickets": 0, "balls": 210, "bowl_runs": 0},
+        ]
+        self.repo.player_stats = AsyncMock(return_value=player_stats)
+        self.repo.standings = AsyncMock(return_value=[])
+        self.repo.bracket = AsyncMock(return_value=[])
+
+        with patch("ipl_draft.services.notification_service.dm", new=AsyncMock()) as mock_dm, \
+             patch("ipl_draft.services.notification_service.group", new=AsyncMock()), \
+             patch("ipl_draft.services.simulation_worker.update_group_tournament_summary", new=AsyncMock()):
+            await simulation_worker.finalize(self.rt, tid)
+            # DM sent to human user
+            mock_dm.assert_called()
+            # Verify squad performance text sent
+            perf_calls = [c for c in mock_dm.call_args_list if "Your XI — Tournament Performance" in str(c)]
+            assert len(perf_calls) == 1
+            call_text = str(perf_calls[0])
+            assert "Player 1 — 288 runs, 21 wkts" in call_text
+            assert "Team totals:" in call_text
+            self.repo.update.assert_any_call(tid, final_dms_sent=True)
+            self.repo.update.assert_any_call(tid, final_announced=True)

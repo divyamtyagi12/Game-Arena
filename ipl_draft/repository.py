@@ -69,10 +69,35 @@ class IplRepo:
         return await self._r("ipl_resume", p_tid=tid)
 
     async def lease(self, tid: int, owner: str, seconds: int) -> bool:
-        return bool(await self._r("ipl_lease", p_tid=tid, p_owner=owner, p_seconds=seconds))
+        res = await self._r("ipl_lease", p_tid=tid, p_owner=owner, p_seconds=seconds)
+        if res:
+            return True
+        # Fallback for COMPLETED tournaments: SQL function excludes COMPLETED, so acquire directly via postgrest
+        try:
+            from datetime import datetime, timezone, timedelta
+            until_iso = (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
+            rows = await self.db.exec(
+                lambda c: c.table("ipl_tournaments")
+                .update({"lease_owner": owner, "lease_until": until_iso})
+                .eq("id", tid)
+                .eq("state", "COMPLETED")
+                .eq("final_announced", False)
+            )
+            return bool(rows)
+        except Exception:
+            return False
 
     async def release_lease(self, tid: int, owner: str) -> None:
         await self._r("ipl_release_lease", p_tid=tid, p_owner=owner)
+        try:
+            await self.db.exec(
+                lambda c: c.table("ipl_tournaments")
+                .update({"lease_owner": None, "lease_until": None})
+                .eq("id", tid)
+                .eq("lease_owner", owner)
+            )
+        except Exception:
+            pass
 
     # ── pool / draft ──
     async def pool_summary(self) -> dict:
