@@ -39,10 +39,54 @@ ROLE_ICON = {
 
 
 def offer(offer_id: int, cands: Sequence[dict], team_id: int, roster: Sequence[dict] | None = None) -> Markup:
-    from .engine.draft_engine import is_pick_legal
-    rows = []
+    from .engine.draft_engine import is_pick_legal, remaining_role_needs
     players = roster or []
-    for c in cands:
+    needs = remaining_role_needs(players)
+    b_need = needs.get("BOWL", 0)
+    wk_need = needs.get("WK", 0)
+    ar_need = needs.get("AR", 0)
+    tot_needed = b_need + wk_need + ar_need
+    picks_left = 11 - len(players)
+
+    # Filter strictly to legal candidates — NEVER show any block sign (🚫)
+    legal_cands = [c for c in cands if is_pick_legal(players, c.get("player") or {})]
+
+    # If criteria is left and we are in a crunch (picks_left <= tot_needed)
+    # or a specific role is mandatory, provide 4 options of that required role
+    if picks_left <= tot_needed and tot_needed > 0:
+        deficit_cands: list[dict] = []
+        if wk_need > 0:
+            wk_opts = [c for c in legal_cands if (c.get("player") or {}).get("role") == "WK"]
+            deficit_cands.extend(wk_opts[:4])
+        if b_need > 0:
+            b_opts = [c for c in legal_cands if (c.get("player") or {}).get("role") == "BOWL"]
+            deficit_cands.extend(b_opts[:4])
+        if ar_need > 0:
+            ar_opts = [c for c in legal_cands if (c.get("player") or {}).get("role") == "AR"]
+            deficit_cands.extend(ar_opts[:4])
+
+        chosen_cands = deficit_cands if deficit_cands else legal_cands[:4]
+    elif tot_needed > 0:
+        # Criteria is left, but not in strict crunch yet:
+        # Prioritize deficit roles (up to 4 each) plus other legal options, never showing any blocked cards
+        chosen_cands = []
+        if wk_need > 0:
+            chosen_cands.extend([c for c in legal_cands if (c.get("player") or {}).get("role") == "WK"][:4])
+        if b_need > 0:
+            chosen_cands.extend([c for c in legal_cands if (c.get("player") or {}).get("role") == "BOWL"][:4])
+        if ar_need > 0:
+            chosen_cands.extend([c for c in legal_cands if (c.get("player") or {}).get("role") == "AR"][:4])
+        chosen_ids = {c.get("pos") or c.get("position") for c in chosen_cands}
+        for c in legal_cands:
+            pos_key = c.get("pos") or c.get("position")
+            if pos_key not in chosen_ids:
+                chosen_cands.append(c)
+                chosen_ids.add(pos_key)
+    else:
+        chosen_cands = legal_cands
+
+    rows = []
+    for c in chosen_cands:
         p = c.get("player") or {}
         role = p.get("role", "BAT")
         icon = ROLE_ICON.get(role, "🏏")
@@ -52,11 +96,7 @@ def offer(offer_id: int, cands: Sequence[dict], team_id: int, roster: Sequence[d
         label = f"{icon} {name} ({code})" if code else f"{icon} {name}"
         pos = c.get("pos") or c.get("position", 1)
 
-        if is_pick_legal(players, p):
-            cb_data = f"ipl:pk:{offer_id}:{pos}"
-        else:
-            cb_data = f"ipl:blk:{pos}"
-            label = f"🚫 {label}"
+        cb_data = f"ipl:pk:{offer_id}:{pos}"
         rows.append([Btn(label, callback_data=cb_data)])
 
     rows.append([Btn("📋 MY TEAM", callback_data=f"ipl:tm:{team_id}")])

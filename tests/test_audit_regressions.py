@@ -196,7 +196,7 @@ class TestAuditRegressions(unittest.IsolatedAsyncioTestCase):
         assert reason == "OK"
 
     def test_keyboards_offer_disables_illegal_and_duplicate_candidates(self):
-        """Verify keyboards.offer attaches blocked callback and 🚫 prefix to illegal and duplicate cards."""
+        """Verify keyboards.offer excludes illegal and duplicate cards and NEVER displays block signs (🚫)."""
         roster = [
             {"id": "p_vk", "name": "Virat Kohli", "role": "BAT"},
             {"id": "p1", "name": "B1", "role": "BAT"},
@@ -213,17 +213,80 @@ class TestAuditRegressions(unittest.IsolatedAsyncioTestCase):
         markup = kb.offer(42, candidates, 101, roster=roster)
         buttons = [btn for row in markup.inline_keyboard for btn in row]
 
-        # Pos 1: duplicate -> blocked
-        assert buttons[0].callback_data == "ipl:blk:1"
-        assert "🚫" in buttons[0].text
+        # Illegal/duplicate candidates are never rendered as blocked buttons: zero 🚫 signs
+        assert all("🚫" not in b.text for b in buttons)
+        assert all("ipl:blk" not in (b.callback_data or "") for b in buttons)
 
-        # Pos 2: illegal role -> blocked
-        assert buttons[1].callback_data == "ipl:blk:2"
-        assert "🚫" in buttons[1].text
+        # Only the legal candidate (+ MY TEAM button) is present
+        selectable = [b for b in buttons if b.callback_data and b.callback_data.startswith("ipl:pk")]
+        assert len(selectable) == 1
+        assert selectable[0].callback_data == "ipl:pk:42:3"
+        assert "Jasprit Bumrah" in selectable[0].text
 
-        # Pos 3: legal bowler -> selectable
-        assert buttons[2].callback_data == "ipl:pk:42:3"
-        assert "🚫" not in buttons[2].text
+    def test_keyboards_offer_criteria_left_gives_4_options_never_block_sign(self):
+        """When a role criteria is left (e.g. 1 keeper), offer provides 4 options of that required role and zero block signs."""
+        # 10 players, 1 pick left, needs 1 WK
+        roster_need_wk = [
+            {"id": f"p{i}", "name": f"P{i}", "role": "BAT"} for i in range(1, 7)
+        ] + [
+            {"id": "p7", "name": "P7", "role": "AR"},
+            {"id": "p8", "name": "P8", "role": "BOWL"},
+            {"id": "p9", "name": "P9", "role": "BOWL"},
+            {"id": "p10", "name": "P10", "role": "BOWL"},
+        ]
+        candidates = [
+            {"pos": i, "player": {"id": f"wk{i}", "name": f"Keeper {i}", "role": "WK"}} for i in range(1, 7)
+        ] + [
+            {"pos": 7, "player": {"id": "bat1", "name": "Batter 1", "role": "BAT"}},
+            {"pos": 8, "player": {"id": "bat2", "name": "Batter 2", "role": "BAT"}},
+        ]
+        markup = kb.offer(100, candidates, 10, roster=roster_need_wk)
+        buttons = [btn for row in markup.inline_keyboard for btn in row if btn.callback_data and btn.callback_data.startswith("ipl:pk")]
+
+        # Exactly 4 options of keeper to pick
+        assert len(buttons) == 4
+        assert all("🧤" in b.text for b in buttons)
+        assert all("🚫" not in b.text for b in buttons)
+
+        # Same for bowler criteria: 10 players, needs 1 BOWL
+        roster_need_bowl = [
+            {"id": f"p{i}", "name": f"P{i}", "role": "BAT"} for i in range(1, 7)
+        ] + [
+            {"id": "p7", "name": "P7", "role": "WK"},
+            {"id": "p8", "name": "P8", "role": "AR"},
+            {"id": "p9", "name": "P9", "role": "BOWL"},
+            {"id": "p10", "name": "P10", "role": "BOWL"},
+        ]
+        bowl_cands = [
+            {"pos": i, "player": {"id": f"bw{i}", "name": f"Bowler {i}", "role": "BOWL"}} for i in range(1, 7)
+        ] + [
+            {"pos": 7, "player": {"id": "bat1", "name": "Batter 1", "role": "BAT"}},
+        ]
+        markup_b = kb.offer(101, bowl_cands, 10, roster=roster_need_bowl)
+        b_buttons = [btn for row in markup_b.inline_keyboard for btn in row if btn.callback_data and btn.callback_data.startswith("ipl:pk")]
+        assert len(b_buttons) == 4
+        assert all("🎯" in b.text for b in b_buttons)
+        assert all("🚫" not in b.text for b in b_buttons)
+
+        # Same for all-rounder criteria: 10 players, needs 1 AR
+        roster_need_ar = [
+            {"id": f"p{i}", "name": f"P{i}", "role": "BAT"} for i in range(1, 7)
+        ] + [
+            {"id": "p7", "name": "P7", "role": "WK"},
+            {"id": "p8", "name": "P8", "role": "BOWL"},
+            {"id": "p9", "name": "P9", "role": "BOWL"},
+            {"id": "p10", "name": "P10", "role": "BOWL"},
+        ]
+        ar_cands = [
+            {"pos": i, "player": {"id": f"ar{i}", "name": f"AllRounder {i}", "role": "AR"}} for i in range(1, 7)
+        ] + [
+            {"pos": 7, "player": {"id": "bat1", "name": "Batter 1", "role": "BAT"}},
+        ]
+        markup_ar = kb.offer(102, ar_cands, 10, roster=roster_need_ar)
+        ar_buttons = [btn for row in markup_ar.inline_keyboard for btn in row if btn.callback_data and btn.callback_data.startswith("ipl:pk")]
+        assert len(ar_buttons) == 4
+        assert all("🔄" in b.text for b in ar_buttons)
+        assert all("🚫" not in b.text for b in ar_buttons)
 
     def test_offer_keyboard_never_has_confirm_or_reset_buttons(self):
         """Verify offer keyboards strictly adhere to single-tap selection (zero confirm/reset buttons)."""

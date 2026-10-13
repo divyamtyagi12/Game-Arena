@@ -113,13 +113,18 @@ class TestIplAutomaticProgression(unittest.IsolatedAsyncioTestCase):
             {"id": 2, "name": "Team 2", "kind": "HUMAN"},
         ])
         self.repo.team_roster = AsyncMock(return_value={"team": {"id": 1}, "players": valid_11})
+        # While a team is still pending batting order, _drafting must wait (return False)
         self.repo.teams_pending_batting_order = AsyncMock(return_value=[{"id": 2}])
-
         with patch("ipl_draft.services.system_service.prepare_system_teams", new=AsyncMock()) as mock_sys:
-            res = await simulation_worker._drafting(self.rt, t)
-            assert res is True
-            # Batting order autofilled for pending team
-            self.repo.batting_order_autofill.assert_called_once_with(2)
+            res_waiting = await simulation_worker._drafting(self.rt, t)
+            assert res_waiting is False
+            mock_sys.assert_not_called()
+            self.repo.finish_drafting.assert_not_called()
+
+            # Once all batting orders are confirmed, _drafting advances
+            self.repo.teams_pending_batting_order = AsyncMock(return_value=[])
+            res_ready = await simulation_worker._drafting(self.rt, t)
+            assert res_ready is True
             # System teams prepared
             mock_sys.assert_called_once_with(self.rt, tid)
             # finish_drafting called atomically

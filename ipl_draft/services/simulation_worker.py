@@ -121,13 +121,10 @@ async def _drafting(rt: IplRuntime, t: dict) -> bool:
         if not is_legal:
             raise RuntimeError(f"Human squad validation failed for team {tm['id']} ({tm.get('name')}): {reason}")
 
-    # 2. Autofill any pending batting orders so human delay never blocks tournament progression
-    pending_bo = await rt.repo.teams_pending_batting_order(tid)
-    for tm in pending_bo:
-        try:
-            await rt.repo.batting_order_autofill(tm["id"])
-        except Exception:
-            log.exception("Failed to autofill batting order for team %s", tm.get("id"))
+    # 2. Wait for human managers to complete and confirm their batting orders.
+    # batting_order_tick handles deadline timeouts automatically via rt.s.batting_order_seconds.
+    if await rt.repo.teams_pending_batting_order(tid):
+        return False
 
     # 3. Ensure all system teams are prepared with valid 11-player squads
     await system_service.prepare_system_teams(rt, tid)
