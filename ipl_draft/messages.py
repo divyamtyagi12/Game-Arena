@@ -117,6 +117,13 @@ def my_team_text(team: Mapping, players: Sequence[Mapping], complete: bool) -> s
     return f"📋 <b>{esc(team['name'])}</b> — {len(players)}/11\n\n{rows}" + ("" if complete else "\n\n✍️ Draft in progress…")
 
 
+def final_squad_text(team: Mapping, players: Sequence[Mapping]) -> str:
+    """Format final drafted squad summary sent to player DM upon tournament completion."""
+    rows = "\n".join(f"{i + 1}. {player_line(p)}" for i, p in enumerate(players)) or "<i>No players yet.</i>"
+    tname = esc(team.get("name") or "Team")
+    return f"📋 <b>{tname}</b> — {len(players)}/11\n\n{rows}"
+
+
 def draft_complete_text(team: Mapping, players: Sequence[Mapping]) -> str:
     name = esc(players[-1].get("name") or players[-1].get("display_name") or "?") if players else "Player"
     return (f"✅ <b>{name} selected!</b>\n\n"
@@ -628,6 +635,34 @@ def format_mvps_text(mvps: Mapping) -> str:
         w_word = "wickets" if mw["wickets"] != 1 else "wicket"
         lines.append(f"🎯 <b>Most Wickets:</b> {esc(mw['player'])} — {mw['wickets']} {w_word} (in {esc(mw['team'])})")
     return "\n".join(lines)
+
+
+AWARD_TITLES = {
+    "CHAMPION": "👑 CHAMPION",
+    "RUNNER_UP": "🥈 RUNNER-UP",
+    "ORANGE_CAP": "🏏 ORANGE CAP",
+    "PURPLE_CAP": "🎯 PURPLE CAP",
+    "PLAYER_OF_TOURNAMENT": "⭐ PLAYER OF THE TOURNAMENT",
+    "MOST_SIXES": "💥 MOST SIXES",
+    "BEST_INNINGS": "🔥 BEST INDIVIDUAL INNINGS",
+}
+
+
+def awards_text(awards: Sequence[Mapping]) -> str:
+    """Format full awards summary message (Orange Cap, Purple Cap, etc.) popping into group."""
+    by = {a["award"]: a for a in awards}
+    out = ["🏆 <b>IPL DRAFT AWARDS</b>", ""]
+    for k, title in AWARD_TITLES.items():
+        a = by.get(k)
+        if not a:
+            continue
+        who = a.get("player") or a.get("team") or ""
+        detail = f"\n{esc(a['value_text'])}" if a.get("player") and a.get("value_text") else ""
+        team = f" <i>({esc(a['team'])})</i>" if a.get("player") and a.get("team") else ""
+        out.append(f"{title}\n<b>{esc(who)}</b>{team}{detail}\n")
+    return "\n".join(out)
+
+
 
 
 def format_group_tournament_summary(

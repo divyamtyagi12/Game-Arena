@@ -30,6 +30,7 @@ class IplRuntime:
     progress_pending: set[int] = field(default_factory=set)
     progress_last: dict[int, float] = field(default_factory=dict)
     retry_after: dict[int, float] = field(default_factory=dict)
+    sent_squad_summaries: set[tuple[int, int]] = field(default_factory=set)  # (tid, team_id)
     sleep: Any = None                          # injectable (tests set a no-op)
 
     @classmethod

@@ -205,6 +205,7 @@ alter table ipl_tournament_teams  add column if not exists batting_order_confirm
 alter table ipl_tournament_teams  add column if not exists batting_order_deadline_at timestamptz;
 alter table ipl_tournament_teams  add column if not exists batting_order_message_id bigint;
 alter table ipl_tournament_teams  add column if not exists batting_order_prompted_at timestamptz;
+alter table ipl_tournament_teams  add column if not exists squad_summary_sent boolean not null default false;
 
 -- ───────────────────────── drafting ─────────────────────────
 create table if not exists ipl_draft_offers (
@@ -587,8 +588,16 @@ language sql stable as $$
   select jsonb_build_object('id', t.id, 'tournament_id', t.tournament_id, 'team_no', t.team_no, 'kind', t.kind,
            'user_id', t.user_id, 'franchise_code', t.franchise_code, 'name', t.name,
            'short_name', t.short_name, 'owner_name', t.owner_name, 'squad_complete', t.squad_complete,
-           'auto_draft', t.auto_draft, 'timeouts', t.timeouts)
+           'auto_draft', t.auto_draft, 'timeouts', t.timeouts,
+           'squad_summary_sent', coalesce(t.squad_summary_sent, false))
 $$;
+
+create or replace function ipl_mark_squad_summary_sent(p_team_id bigint) returns boolean
+language plpgsql security definer set search_path = public, ipl_private as $$
+begin
+  update ipl_tournament_teams set squad_summary_sent = true where id = p_team_id;
+  return found;
+end $$;
 
 create or replace function ipl_tournament_json(t ipl_tournaments) returns jsonb
 language sql stable as $$
@@ -661,7 +670,13 @@ begin
     dashboard_message_id = case when p_fields ? 'dashboard_message_id' then (p_fields->>'dashboard_message_id')::bigint else dashboard_message_id end,
     summary_message_id   = case when p_fields ? 'summary_message_id'   then (p_fields->>'summary_message_id')::bigint else summary_message_id end,
     system_announced     = case when p_fields ? 'system_announced'     then (p_fields->>'system_announced')::boolean else system_announced end,
-    final_announced      = case when p_fields ? 'final_announced'      then (p_fields->>'final_announced')::boolean else final_announced end
+    final_announced      = case when p_fields ? 'final_announced'      then (p_fields->>'final_announced')::boolean else final_announced end,
+    awards_recorded      = case when p_fields ? 'awards_recorded'      then (p_fields->>'awards_recorded')::boolean else awards_recorded end,
+    champion_announced   = case when p_fields ? 'champion_announced'   then (p_fields->>'champion_announced')::boolean else champion_announced end,
+    mvp_announced        = case when p_fields ? 'mvp_announced'        then (p_fields->>'mvp_announced')::boolean else mvp_announced end,
+    final_dms_sent       = case when p_fields ? 'final_dms_sent'       then (p_fields->>'final_dms_sent')::boolean else final_dms_sent end,
+    league_summary_posted= case when p_fields ? 'league_summary_posted'then (p_fields->>'league_summary_posted')::boolean else league_summary_posted end,
+    league_dms_sent      = case when p_fields ? 'league_dms_sent'      then (p_fields->>'league_dms_sent')::boolean else league_dms_sent end
    where id = p_tid;
   return found;
 end $$;

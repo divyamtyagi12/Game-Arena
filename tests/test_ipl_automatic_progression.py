@@ -376,3 +376,63 @@ class TestIplAutomaticProgression(unittest.IsolatedAsyncioTestCase):
             assert "Team totals:" in call_text
             self.repo.update.assert_any_call(tid, final_dms_sent=True)
             self.repo.update.assert_any_call(tid, final_announced=True)
+
+    # ── 13. Finalize Sends Group MVPs Message (Image Format) & Final Squad DM ──
+    async def test_finalize_sends_tournament_mvps_to_group_and_final_squad_dm(self):
+        """Verify Tournament MVPs message is posted to group chat and squad summary DM is sent to human manager."""
+        tid = 96
+        t = {
+            "id": tid,
+            "group_id": -1096,
+            "state": "COMPLETED",
+            "champion_team_id": 1,
+            "runner_up_team_id": 2,
+            "final_announced": False,
+            "final_dms_sent": False,
+            "awards_recorded": False,
+            "champion_announced": False,
+            "mvp_announced": False,
+            "lease_owner": self.rt.worker_id,
+        }
+        self.repo.get = AsyncMock(return_value=t)
+        champ = {"id": 1, "name": "Kolkata Knight Riders", "kind": "HUMAN", "user_id": 7158623869}
+        runner = {"id": 2, "name": "Punjab Kings", "kind": "SYSTEM", "user_id": None}
+        self.repo.all_teams = AsyncMock(return_value=[champ, runner])
+        squad = [{"id": f"p{i}", "name": f"Player {i}", "role": "BAT", "nationality": "India"} for i in range(1, 12)]
+        self.repo.team_roster = AsyncMock(return_value={"team": champ, "players": squad})
+        self.repo.get_batting_order_state = AsyncMock(return_value=None)
+        player_stats = [
+            {"player_id": "p1", "name": "Phil Salt", "team_id": 1, "runs": 638, "wickets": 0, "balls": 380, "bat_innings": 14, "fours": 50, "sixes": 24, "outs": 12, "high": 89, "high_balls": 47, "maidens": 0, "catches": 5, "stumpings": 0, "run_outs": 0, "pom": 2, "best_w": 0, "bowl_balls": 0, "bowl_runs": 0},
+            {"player_id": "p2", "name": "Sam Curran", "team_id": 1, "runs": 293, "wickets": 15, "balls": 200, "bat_innings": 14, "fours": 20, "sixes": 10, "outs": 10, "high": 45, "high_balls": 30, "maidens": 1, "catches": 3, "stumpings": 0, "run_outs": 0, "pom": 1, "best_w": 3, "bowl_balls": 300, "bowl_runs": 410},
+        ]
+        self.repo.player_stats = AsyncMock(return_value=player_stats)
+        self.repo.standings = AsyncMock(return_value=[])
+        self.repo.bracket = AsyncMock(return_value=[])
+
+        with patch("ipl_draft.services.notification_service.dm", new=AsyncMock(return_value=True)) as mock_dm, \
+             patch("ipl_draft.services.notification_service.group", new=AsyncMock()) as mock_group, \
+             patch("ipl_draft.services.simulation_worker.update_group_tournament_summary", new=AsyncMock()):
+            await simulation_worker.finalize(self.rt, tid)
+            
+            # Verify MVPs group message posted (Image format)
+            group_calls = [str(c) for c in mock_group.call_args_list]
+            mvp_calls = [c for c in group_calls if "Tournament MVPs (among players' teams)" in c]
+            assert len(mvp_calls) == 1
+            call_text = mvp_calls[0]
+            assert "Most Runs:" in call_text
+            assert "Phil Salt" in call_text
+            assert "638 runs" in call_text
+            assert "Most Wickets:" in call_text
+            assert "Sam Curran" in call_text
+            assert "15 wickets" in call_text
+
+            # Verify final squad summary sent in DM
+            squad_calls = [c for c in mock_dm.call_args_list if "📋 <b>Kolkata Knight Riders</b> — 11/11" in str(c)]
+            assert len(squad_calls) == 1
+            squad_text = str(squad_calls[0])
+            assert "1. Player 1 — 🏏 Batter · India" in squad_text
+
+            # Verify squad performance sent in DM
+            perf_calls = [c for c in mock_dm.call_args_list if "Your XI — Tournament Performance" in str(c)]
+            assert len(perf_calls) == 1
+

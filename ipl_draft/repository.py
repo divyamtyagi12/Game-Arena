@@ -53,6 +53,20 @@ class IplRepo:
     async def all_teams(self, tid: int) -> list[dict]:
         return await self._r("ipl_all_teams", p_tid=tid) or []
 
+    async def mark_squad_summary_sent(self, team_id: int) -> None:
+        try:
+            await self._r("ipl_mark_squad_summary_sent", p_team_id=team_id)
+        except Exception:
+            pass
+        try:
+            await self.db.exec(
+                lambda c: c.table("ipl_tournament_teams")
+                .update({"squad_summary_sent": True})
+                .eq("id", team_id)
+            )
+        except Exception:
+            pass
+
     async def join(self, tid: int, user_id: int, name: str) -> str:
         return await self._r("ipl_join", p_tid=tid, p_user_id=user_id, p_name=name)
 

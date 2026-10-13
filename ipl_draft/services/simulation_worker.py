@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import logging
 import random
 import time
@@ -444,7 +445,7 @@ async def finalize(rt: IplRuntime, tid: int) -> None:
             return
 
         # Atomic database lease to ensure only one worker across processes finalizes
-        if not await rt.repo.lease(tid, rt.worker_id, 120):
+        if t.get("lease_owner") != rt.worker_id and not await rt.repo.lease(tid, rt.worker_id, 120):
             return
 
         try:
@@ -460,6 +461,7 @@ async def finalize(rt: IplRuntime, tid: int) -> None:
 
             # Step 2: Calculate and persist awards before announcements
             stats = await rt.repo.player_stats(tid)
+            computed_awards = []
             if not t.get("awards_recorded"):
                 try:
                     computed_awards = awards_engine.compute_awards(stats, champ, runner)
@@ -467,6 +469,11 @@ async def finalize(rt: IplRuntime, tid: int) -> None:
                     await rt.repo.update(tid, awards_recorded=True)
                 except Exception:
                     log.exception("Failed to compute/store awards for tournament %s", tid)
+            if not computed_awards:
+                try:
+                    computed_awards = awards_engine.compute_awards(stats, champ, runner)
+                except Exception:
+                    pass
 
             # Step 3: Champion announcement (deliver once)
             if champ and not t.get("champion_announced"):
@@ -476,7 +483,7 @@ async def finalize(rt: IplRuntime, tid: int) -> None:
                 except Exception:
                     log.exception("Failed to announce champion for tournament %s", tid)
 
-            # Step 4: Tournament MVPs announcement (deliver once)
+            # Step 4: Tournament MVPs announcement in group (deliver once - matches Image format)
             if not t.get("mvp_announced"):
                 try:
                     mvps = await compute_human_mvps(rt, tid)
@@ -486,33 +493,69 @@ async def finalize(rt: IplRuntime, tid: int) -> None:
                 except Exception:
                     log.exception("Failed to announce MVPs for tournament %s", tid)
 
-            # Step 5: Human manager performance DMs (deliver once)
+            # Step 5: Human manager final squad summary and performance DMs (deliver once, idempotent per user)
             if not t.get("final_dms_sent"):
+                all_squad_summaries_sent = True
                 for tm in teams.values():
-                    if tm["kind"] == "HUMAN":
+                    if tm.get("kind") == "HUMAN" and tm.get("user_id"):
                         won = champ and tm["id"] == champ["id"]
                         try:
                             await notify.dm(rt, tm["user_id"], ("🏆 <b>YOU ARE THE IPL DRAFT CHAMPION!</b>" if won else
                                                                 f"🏁 IPL Draft finished — champion: <b>{m.esc(champ['name']) if champ else '?'}</b>."))
                         except Exception:
                             log.exception("Failed to send champion/finished DM to user %s (team %s)", tm.get("user_id"), tm.get("id"))
+
+                        # 1. Final drafted squad summary DM
+                        already_sent = tm.get("squad_summary_sent") or ((tid, tm["id"]) in getattr(rt, "sent_squad_summaries", set()))
+                        roster_data = None
+                        squad_players = []
                         try:
                             roster_data = await rt.repo.team_roster(tm["id"])
                             squad_players = roster_data.get("players", []) if roster_data else []
+                        except Exception:
+                            log.exception("Failed to fetch roster for team %s", tm.get("id"))
+
+                        if not already_sent:
+                            try:
+                                squad_text = m.final_squad_text(tm, squad_players)
+                                sent_res = await notify.dm(rt, tm["user_id"], squad_text)
+                                if sent_res:
+                                    tm["squad_summary_sent"] = True
+                                    if hasattr(rt, "sent_squad_summaries"):
+                                        rt.sent_squad_summaries.add((tid, tm["id"]))
+                                    if hasattr(rt.repo, "mark_squad_summary_sent"):
+                                        res_m = rt.repo.mark_squad_summary_sent(tm["id"])
+                                        if inspect.isawaitable(res_m):
+                                            await res_m
+                                else:
+                                    all_squad_summaries_sent = False
+                                    log.warning("Telegram reported delivery failure for squad summary to user %s (team %s)", tm.get("user_id"), tm.get("id"))
+                            except Exception:
+                                all_squad_summaries_sent = False
+                                log.exception("Exception sending final squad summary to user %s (team %s)", tm.get("user_id"), tm.get("id"))
+
+                        # 2. Tournament performance DM
+                        try:
                             bo_state = await rt.repo.get_batting_order_state(tm["id"])
+                            perf_players = list(squad_players)
                             if bo_state and bo_state.get("ordered") and len(bo_state["ordered"]) == 11:
-                                squad_players = bo_state["ordered"]
-                            elif squad_players:
-                                squad_players = sorted(
-                                    squad_players,
+                                perf_players = bo_state["ordered"]
+                            elif perf_players:
+                                perf_players = sorted(
+                                    perf_players,
                                     key=lambda p: (p.get("batting_order") is None, p.get("batting_order", 99), p.get("slot", 99))
                                 )
-                            if squad_players:
-                                perf_text = m.squad_performance_text(squad_players, stats)
+                            if not perf_players and bo_state and bo_state.get("players"):
+                                perf_players = bo_state["players"]
+
+                            if perf_players and stats:
+                                perf_text = m.squad_performance_text(perf_players, stats)
                                 await notify.dm(rt, tm["user_id"], perf_text)
                         except Exception:
                             log.exception("Failed to send squad performance DM to user %s (team %s)", tm.get("user_id"), tm.get("id"))
-                await rt.repo.update(tid, final_dms_sent=True)
+
+                if all_squad_summaries_sent:
+                    await rt.repo.update(tid, final_dms_sent=True)
 
             # Step 6: Mark finalization complete
             await rt.repo.update(tid, final_announced=True)
