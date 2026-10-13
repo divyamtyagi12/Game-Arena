@@ -483,9 +483,11 @@ async def finalize(rt: IplRuntime, tid: int) -> None:
                 except Exception:
                     log.exception("Failed to announce champion for tournament %s", tid)
 
-            # Step 4: Tournament MVPs announcement in group (deliver once - matches Image format)
+            # Step 4: Tournament Awards and MVPs announcement in group (deliver once)
             if not t.get("mvp_announced"):
                 try:
+                    if computed_awards:
+                        await notify.group(rt, t["group_id"], m.awards_text(computed_awards))
                     mvps = await compute_human_mvps(rt, tid)
                     if mvps and (mvps.get("most_runs") or mvps.get("most_wickets")):
                         await notify.group(rt, t["group_id"], m.format_mvps_text(mvps))
@@ -534,25 +536,25 @@ async def finalize(rt: IplRuntime, tid: int) -> None:
                                 all_squad_summaries_sent = False
                                 log.exception("Exception sending final squad summary to user %s (team %s)", tm.get("user_id"), tm.get("id"))
 
-                        # 2. Tournament performance DM
-                        try:
-                            bo_state = await rt.repo.get_batting_order_state(tm["id"])
-                            perf_players = list(squad_players)
-                            if bo_state and bo_state.get("ordered") and len(bo_state["ordered"]) == 11:
-                                perf_players = bo_state["ordered"]
-                            elif perf_players:
-                                perf_players = sorted(
-                                    perf_players,
-                                    key=lambda p: (p.get("batting_order") is None, p.get("batting_order", 99), p.get("slot", 99))
-                                )
-                            if not perf_players and bo_state and bo_state.get("players"):
-                                perf_players = bo_state["players"]
+                            # 2. Tournament performance DM
+                            try:
+                                bo_state = await rt.repo.get_batting_order_state(tm["id"])
+                                perf_players = list(squad_players)
+                                if bo_state and bo_state.get("ordered") and len(bo_state["ordered"]) == 11:
+                                    perf_players = bo_state["ordered"]
+                                elif perf_players:
+                                    perf_players = sorted(
+                                        perf_players,
+                                        key=lambda p: (p.get("batting_order") is None, p.get("batting_order", 99), p.get("slot", 99))
+                                    )
+                                if not perf_players and bo_state and bo_state.get("players"):
+                                    perf_players = bo_state["players"]
 
-                            if perf_players and stats:
-                                perf_text = m.squad_performance_text(perf_players, stats)
-                                await notify.dm(rt, tm["user_id"], perf_text)
-                        except Exception:
-                            log.exception("Failed to send squad performance DM to user %s (team %s)", tm.get("user_id"), tm.get("id"))
+                                if perf_players and stats:
+                                    perf_text = m.squad_performance_text(perf_players, stats)
+                                    await notify.dm(rt, tm["user_id"], perf_text)
+                            except Exception:
+                                log.exception("Failed to send squad performance DM to user %s (team %s)", tm.get("user_id"), tm.get("id"))
 
                 if all_squad_summaries_sent:
                     await rt.repo.update(tid, final_dms_sent=True)

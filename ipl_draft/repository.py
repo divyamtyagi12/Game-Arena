@@ -85,12 +85,12 @@ class IplRepo:
     async def lease(self, tid: int, owner: str, seconds: int) -> bool:
         try:
             res = await self._r("ipl_lease", p_tid=tid, p_owner=owner, p_seconds=seconds)
-            if res is not None:
-                return bool(res)
+            if res:
+                return True
         except Exception:
             pass
 
-        # Fallback only when RPC fails or is unavailable: atomic conditional update
+        # Fallback when RPC fails, returns false (e.g. outdated stored proc rejecting COMPLETED unannounced), or is unavailable: atomic conditional update
         try:
             from datetime import datetime, timezone, timedelta
             now_iso = datetime.now(timezone.utc).isoformat()
