@@ -135,7 +135,7 @@ def main() -> None:
 
     ctx = AppContext.create(settings, Database(settings.supabase_url, settings.supabase_key))
     app = (ApplicationBuilder().token(settings.telegram_token)
-           .rate_limiter(AIORateLimiter(max_retries=3))
+           .rate_limiter(AIORateLimiter(max_retries=0))
            .concurrent_updates(True)   # simultaneous button presses are handled in parallel
            .post_init(post_init).build())
     app.bot_data["ctx"] = ctx

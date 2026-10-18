@@ -102,3 +102,38 @@ class TestAnimeDraftConcurrency(unittest.IsolatedAsyncioTestCase):
 
             self.assertGreaterEqual(t2 - t1, 0.4)
             self.assertEqual(mock_edit.call_count, 2)
+
+    async def test_league_runner_concurrency_semaphore(self) -> None:
+        """Verify that league runner executes matches with controlled concurrency."""
+        from services import league_service
+        mock_ctx = MagicMock()
+        mock_ctx.games.get = AsyncMock(return_value={"id": 1, "group_id": -100, "status": "LEAGUE"})
+        mock_ctx.players.list_for_game = AsyncMock(return_value=[{"id": 1}, {"id": 2}, {"id": 3}, {"id": 4}])
+        mock_ctx.matches.reset_running = AsyncMock()
+        mock_ctx.matches.ensure_fixtures = AsyncMock(return_value=False)
+        mock_ctx.matches.list_for_game = AsyncMock(return_value=[
+            {"id": 101, "round_no": 1, "status": "PENDING", "notified": False},
+            {"id": 102, "round_no": 1, "status": "PENDING", "notified": False},
+            {"id": 103, "round_no": 1, "status": "PENDING", "notified": False},
+            {"id": 104, "round_no": 1, "status": "PENDING", "notified": False},
+        ])
+
+        concurrent_matches = 0
+        peak_concurrent_matches = 0
+
+        async def mock_execute(ctx, m, title):
+            nonlocal concurrent_matches, peak_concurrent_matches
+            concurrent_matches += 1
+            if concurrent_matches > peak_concurrent_matches:
+                peak_concurrent_matches = concurrent_matches
+            await asyncio.sleep(0.05)
+            concurrent_matches -= 1
+            return None
+
+        with patch("services.match_service.execute_match", side_effect=mock_execute), \
+             patch("services.table_service.post_table", new_callable=AsyncMock), \
+             patch("services.final_service.start_final", new_callable=AsyncMock):
+            await league_service.run_league(mock_ctx, 1)
+
+        self.assertLessEqual(peak_concurrent_matches, 2)
+

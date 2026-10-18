@@ -45,9 +45,9 @@ async def send_message(ctx: AppContext, chat_id: int, text: str, *,
         except RetryAfter as exc:
             elapsed = time.perf_counter() - t0
             log.warning("[TG_429] send_message to %s hit RetryAfter(%.1fs) after %.3fs", chat_id, exc.retry_after, elapsed)
-            if exc.retry_after > 5.0 or attempt == 2:
+            if exc.retry_after > 2.0 or attempt == 2:
                 return None
-            await asyncio.sleep(exc.retry_after + 0.2)
+            await asyncio.sleep(exc.retry_after + 0.1)
         except Forbidden:
             log.warning("Cannot message chat %s (blocked / removed)", chat_id)
             if chat_id > 0:
@@ -58,7 +58,7 @@ async def send_message(ctx: AppContext, chat_id: int, text: str, *,
             log.warning("[TG_NET] send_message to %s timed out (%s) after %.3fs (attempt %d/2)",
                         chat_id, type(exc).__name__, elapsed, attempt)
             if attempt < 2:
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(0.3)
         except TelegramError as exc:
             log.warning("send_message to %s failed: %s", chat_id, exc)
             return None
@@ -94,10 +94,9 @@ async def safe_edit(ctx: AppContext, chat_id: int, message_id: int, text: str, *
             return "ok"
         except RetryAfter as exc:
             elapsed = time.perf_counter() - t0
-            log.warning("[TG_429] edit in %s mid=%s hit RetryAfter(%.1fs) after %.3fs", chat_id, message_id, exc.retry_after, elapsed)
-            if exc.retry_after > 5.0 or attempt == 2:
-                return "error"
-            await asyncio.sleep(exc.retry_after + 0.2)
+            log.warning("[TG_429] edit in %s mid=%s hit RetryAfter(%.1fs), skipping edit without sleep",
+                        chat_id, message_id, exc.retry_after)
+            return "error"
         except BadRequest as exc:
             msg_str = str(exc).lower()
             if "not modified" in msg_str:

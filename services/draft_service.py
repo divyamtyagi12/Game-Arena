@@ -56,7 +56,13 @@ async def start_game(ctx: AppContext, game_id: int) -> None:
             await ctx.games.update(game_id, progress_message_id=prog.message_id)
         group = await ctx.groups.get(gid)
         title = (group or {}).get("title", "")
-        await asyncio.gather(*(_begin_player(ctx, p, title) for p in players), return_exceptions=True)
+
+        async def _staggered_begin(player: dict, idx: int) -> None:
+            if idx > 0:
+                await asyncio.sleep(idx * 0.2)
+            await _begin_player(ctx, player, title)
+
+        await asyncio.gather(*(_staggered_begin(p, i) for i, p in enumerate(players)), return_exceptions=True)
 
 
 async def _begin_player(ctx: AppContext, gp: dict, title: str) -> None:
