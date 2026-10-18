@@ -381,3 +381,112 @@ class TestAuditRegressions(unittest.IsolatedAsyncioTestCase):
         with patch("ipl_draft.services.simulation_worker.awards_engine.compute_awards") as mock_awards:
             await simulation_worker.finalize(self.rt, 99)
             mock_awards.assert_not_called()
+
+    # ══════════════════════════════════════════════════════════════════════
+    # ISSUE E: Missing Deficit Roles (Keeper/Bowler) and Auto-Assign Fallback
+    # ══════════════════════════════════════════════════════════════════════
+
+    def test_keyboards_offer_missing_keeper_renders_auto_assign_button(self):
+        """When an offer contains NO keepers and 1 keeper is required, keyboard must render AUTO-ASSIGN button."""
+        roster_need_wk = [
+            {"id": f"p{i}", "name": f"P{i}", "role": "BAT"} for i in range(1, 7)
+        ] + [
+            {"id": "p7", "name": "P7", "role": "AR"},
+            {"id": "p8", "name": "P8", "role": "BOWL"},
+            {"id": "p9", "name": "P9", "role": "BOWL"},
+            {"id": "p10", "name": "P10", "role": "BOWL"},
+        ]
+        # Only BAT and BOWL offered — NO WK!
+        candidates = [
+            {"pos": 1, "player": {"id": "bat1", "name": "Batter 1", "role": "BAT"}},
+            {"pos": 2, "player": {"id": "bowl1", "name": "Bowler 1", "role": "BOWL"}},
+        ]
+        markup = kb.offer(100, candidates, 10, roster=roster_need_wk)
+        buttons = [btn for row in markup.inline_keyboard for btn in row]
+        button_texts = [b.text for b in buttons]
+
+        # Must NOT be empty with only MY TEAM! Must offer AUTO-ASSIGN RANDOM KEEPER!
+        assert any("AUTO-ASSIGN RANDOM KEEPER" in t for t in button_texts)
+        assign_btn = next(b for b in buttons if "AUTO-ASSIGN RANDOM KEEPER" in b.text)
+        assert assign_btn.callback_data == "ipl:rnd:100"
+
+    async def test_ensure_legal_candidates_injects_keeper_when_missing(self):
+        """ensure_legal_candidates queries pool and updates offer when keeper is required but missing."""
+        team = {"id": 10, "tournament_id": 5}
+        roster_need_wk = [
+            {"id": f"p{i}", "name": f"P{i}", "role": "BAT"} for i in range(1, 7)
+        ] + [
+            {"id": "p7", "name": "P7", "role": "AR"},
+            {"id": "p8", "name": "P8", "role": "BOWL"},
+            {"id": "p9", "name": "P9", "role": "BOWL"},
+            {"id": "p10", "name": "P10", "role": "BOWL"},
+        ]
+        offer = {
+            "offer_id": 99,
+            "tournament_id": 5,
+            "team_id": 10,
+            "candidates": [
+                {"pos": 1, "player": {"id": "bat1", "name": "Batter 1", "role": "BAT"}}
+            ],
+        }
+
+        mock_keeper = {
+            "id": "wk_msd",
+            "name": "MS Dhoni",
+            "display_name": "MS Dhoni",
+            "role": "WK",
+            "nationality": "India",
+        }
+        self.repo.get_legal_pool_players = AsyncMock(return_value=[mock_keeper])
+        self.repo.replace_offer_candidates = AsyncMock(return_value=[
+            {"pos": 1, "position": 1, "player": mock_keeper}
+        ])
+
+        updated = await draft_service.ensure_legal_candidates(self.rt, team, offer, roster_need_wk)
+        assert len(updated["candidates"]) == 1
+        assert updated["candidates"][0]["player"]["role"] == "WK"
+        self.repo.replace_offer_candidates.assert_called_once_with(99, ["wk_msd"])
+
+    async def test_random_pick_callback_auto_assigns_required_keeper(self):
+        """Pressing ipl:rnd:{offer_id} auto-picks a legal keeper when keeper is required."""
+        from ipl_draft.handlers import callbacks
+
+        mock_q = MagicMock()
+        mock_q.from_user.id = 12345
+        mock_q.message.message_id = 999
+        mock_context = MagicMock()
+
+        offer_data = {
+            "offer_id": 100,
+            "tournament_id": 1,
+            "team_id": 50,
+            "status": "OPEN",
+            "team": {"id": 50, "user_id": 12345},
+            "candidates": [
+                {"pos": 1, "player": {"id": "wk_1", "name": "MS Dhoni", "role": "WK"}},
+            ],
+        }
+        roster_players = [
+            {"id": f"p{i}", "name": f"P{i}", "role": "BAT"} for i in range(1, 7)
+        ] + [
+            {"id": "p7", "name": "P7", "role": "AR"},
+            {"id": "p8", "name": "P8", "role": "BOWL"},
+            {"id": "p9", "name": "P9", "role": "BOWL"},
+            {"id": "p10", "name": "P10", "role": "BOWL"},
+        ]
+
+        self.repo.get_offer = AsyncMock(return_value=offer_data)
+        self.repo.team_of_user = AsyncMock(return_value={"id": 50, "user_id": 12345})
+        self.repo.team_roster = AsyncMock(return_value={"team": {"id": 50, "user_id": 12345}, "players": roster_players})
+        self.repo.pick = AsyncMock(return_value={
+            "status": "OK",
+            "player": {"name": "MS Dhoni", "role": "WK"},
+            "done": True,
+            "squad_complete": True,
+        })
+        self.rt.rng.choice = MagicMock(side_effect=lambda lst: lst[0])
+
+        with patch("ipl_draft.handlers.callbacks.safe_answer", new_callable=AsyncMock) as mock_ans:
+            await callbacks.random_pick(self.rt, mock_context, mock_q, 100)
+            mock_ans.assert_called_once()
+            assert "MS Dhoni auto-assigned!" in mock_ans.call_args[0][1]

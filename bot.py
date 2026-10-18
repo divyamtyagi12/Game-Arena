@@ -23,6 +23,7 @@ from ipl_draft.runtime import IplRuntime
 from ipl_draft.services import simulation_worker as ipl_worker
 from services.recovery import recover_games
 from utils.logging_setup import setup_logging
+from utils.metrics import event_loop_lag_monitor, install_handler_metrics
 
 log = logging.getLogger("anime_draft")
 ALLOWED_UPDATES = ["message", "callback_query", "my_chat_member"]
@@ -64,6 +65,7 @@ async def post_init(app: Application) -> None:
     await app.bot.set_my_commands(COMMANDS)
     await recover_games(ctx)
     await start_ipl(app)
+    ctx.spawn(event_loop_lag_monitor(interval_seconds=1.0, lag_threshold_seconds=0.4), name="event-loop-monitor")
     if ctx.settings.draft_timeout_minutes > 0:
         ctx.spawn(draft_service.autopick_loop(ctx), name="autopick-loop")
     log.info("ANIME DRAFT ready as @%s (%d characters)", ctx.bot_username, len(ctx.catalog))
@@ -139,6 +141,7 @@ def main() -> None:
     app.bot_data["ctx"] = ctx
     app.bot_data["ipl"] = IplRuntime.create(ctx)
     register_handlers(app)
+    install_handler_metrics(app)
 
     if settings.run_mode == "webhook":
         base = settings.webhook_url.rstrip("/")

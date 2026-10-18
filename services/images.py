@@ -5,6 +5,7 @@ Artwork is never scraped at runtime; after the first successful send the file_id
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Sequence
 
@@ -31,9 +32,12 @@ async def send_album(ctx: AppContext, chat_id: int, chars: Sequence[Character]) 
     media = [InputMediaPhoto(media=ref, caption=f"{i}. {esc(c.name)}", parse_mode=ParseMode.HTML)
              for i, (c, ref) in enumerate(zip(chars, refs), 1)]
     try:
-        msgs = await ctx.bot.send_media_group(chat_id, media)
-    except TelegramError as exc:
-        log.warning("Album send failed (%s); falling back to text", exc)
+        msgs = await asyncio.wait_for(
+            ctx.bot.send_media_group(chat_id, media, read_timeout=8.0, write_timeout=8.0),
+            timeout=10.0,
+        )
+    except (TelegramError, asyncio.TimeoutError) as exc:
+        log.warning("Album send to %s failed (%s); falling back to text", chat_id, exc)
         return False
     for c, m in zip(chars, msgs):
         if m.photo and not c.image_file_id:

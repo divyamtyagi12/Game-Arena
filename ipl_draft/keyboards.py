@@ -99,6 +99,21 @@ def offer(offer_id: int, cands: Sequence[dict], team_id: int, roster: Sequence[d
         cb_data = f"ipl:pk:{offer_id}:{pos}"
         rows.append([Btn(label, callback_data=cb_data)])
 
+    if not chosen_cands:
+        if wk_need > 0:
+            rows.append([Btn("🧤 🎲 AUTO-ASSIGN RANDOM KEEPER", callback_data=f"ipl:rnd:{offer_id}")])
+        elif b_need > 0:
+            rows.append([Btn("🎯 🎲 AUTO-ASSIGN RANDOM BOWLER", callback_data=f"ipl:rnd:{offer_id}")])
+        elif ar_need > 0:
+            rows.append([Btn("🔄 🎲 AUTO-ASSIGN RANDOM ALL-ROUNDER", callback_data=f"ipl:rnd:{offer_id}")])
+        else:
+            rows.append([Btn("🎲 AUTO-ASSIGN RANDOM PLAYER", callback_data=f"ipl:rnd:{offer_id}")])
+    else:
+        if wk_need > 0 and picks_left <= tot_needed:
+            rows.append([Btn("🧤 🎲 Auto-Pick Random Keeper", callback_data=f"ipl:rnd:{offer_id}")])
+        elif tot_needed > 0 and picks_left <= tot_needed:
+            rows.append([Btn("🎲 Auto-Pick Required Role", callback_data=f"ipl:rnd:{offer_id}")])
+
     rows.append([Btn("📋 MY TEAM", callback_data=f"ipl:tm:{team_id}")])
     return Markup(rows)
 

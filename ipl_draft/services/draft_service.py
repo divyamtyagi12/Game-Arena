@@ -37,6 +37,94 @@ async def offers_for_teams(rt: IplRuntime, tid: int) -> None:
         await deliver_offer(rt, team)
 
 
+async def ensure_legal_candidates(
+    rt: IplRuntime,
+    team: dict,
+    offer: dict,
+    roster: list[dict],
+) -> dict:
+    """Guarantee that an open draft offer contains valid, legal candidates to satisfy team requirements."""
+    from ..engine.draft_engine import is_pick_legal, remaining_role_needs
+    players = roster or []
+    needs = remaining_role_needs(players)
+    b_need = needs.get("BOWL", 0)
+    wk_need = needs.get("WK", 0)
+    ar_need = needs.get("AR", 0)
+    tot_needed = b_need + wk_need + ar_need
+    picks_left = 11 - len(players)
+
+    cands = list(offer.get("candidates") or [])
+    legal_cands = [c for c in cands if is_pick_legal(players, c.get("player") or {})]
+
+    # Needs repair if:
+    # 1. Zero legal candidates
+    # 2. In a crunch (picks_left <= tot_needed) and any needed role is missing from legal candidates
+    # 3. WK is needed and missing from offered candidates
+    needs_repair = False
+    missing_roles: list[str] = []
+    if not legal_cands:
+        needs_repair = True
+        if wk_need > 0:
+            missing_roles.append("WK")
+        if b_need > 0:
+            missing_roles.append("BOWL")
+        if ar_need > 0:
+            missing_roles.append("AR")
+    elif picks_left <= tot_needed and tot_needed > 0:
+        if wk_need > 0 and not any((c.get("player") or {}).get("role") == "WK" for c in legal_cands):
+            needs_repair = True
+            missing_roles.append("WK")
+        if b_need > 0 and not any((c.get("player") or {}).get("role") == "BOWL" for c in legal_cands):
+            needs_repair = True
+            missing_roles.append("BOWL")
+        if ar_need > 0 and not any((c.get("player") or {}).get("role") == "AR" for c in legal_cands):
+            needs_repair = True
+            missing_roles.append("AR")
+    elif tot_needed > 0:
+        if wk_need > 0 and not any((c.get("player") or {}).get("role") == "WK" for c in cands):
+            needs_repair = True
+            missing_roles.append("WK")
+
+    if not needs_repair:
+        return offer
+
+    tid = offer.get("tournament_id") or team.get("tournament_id")
+    team_id = offer.get("team_id") or team.get("id")
+    offer_id = offer.get("offer_id") or offer.get("id")
+
+    if not tid or not team_id or not offer_id or not hasattr(rt.repo, "get_legal_pool_players"):
+        return offer
+
+    try:
+        needed_roles = missing_roles if missing_roles else (["WK"] if wk_need > 0 else ["BOWL", "AR", "BAT"])
+        extra_players = await rt.repo.get_legal_pool_players(tid, team_id, needed_roles, limit=4)
+        if not extra_players:
+            return offer
+
+        # Form a new candidate list: prioritize extra players of needed roles, plus any legal candidates
+        new_player_ids = [str(p["id"]) for p in extra_players]
+        for c in legal_cands:
+            p = c.get("player") or {}
+            pid = str(p.get("id") or "")
+            if pid and pid not in new_player_ids:
+                new_player_ids.append(pid)
+            if len(new_player_ids) >= 11:
+                break
+
+        updated_cands = await rt.repo.replace_offer_candidates(offer_id, new_player_ids)
+        if updated_cands:
+            offer["candidates"] = updated_cands
+        else:
+            offer["candidates"] = [
+                {"pos": idx + 1, "position": idx + 1, "player": p}
+                for idx, p in enumerate(extra_players)
+            ]
+    except Exception:
+        log.exception("IPL: failed to ensure legal candidates for offer %s", offer_id)
+
+    return offer
+
+
 async def deliver_offer(rt: IplRuntime, team: dict) -> None:
     """Open (or re-read) this team's current offer and DM it once. An undeliverable DM switches the team to auto-draft."""
     res = await rt.repo.open_offer(team["id"])
@@ -46,6 +134,7 @@ async def deliver_offer(rt: IplRuntime, team: dict) -> None:
         return
     roster = await rt.repo.team_roster(team["id"])
     players = roster["players"] if roster else []
+    res = await ensure_legal_candidates(rt, team, res, players)
     text = m.offer_text(team, res, res["picks_done"], rt.s.draft_seconds, roster=players)
     sent = await notify.dm(rt, team["user_id"], text, kb.offer(res["offer_id"], res["candidates"], team["id"], roster=players))
     if sent:
@@ -149,6 +238,12 @@ async def draft_tick(rt: IplRuntime) -> None:
     """Auto-picks for expired deadlines / auto-draft teams, and (re)opens offers after restarts."""
     for due in await rt.repo.due_offers():
         try:
+            due = await ensure_legal_candidates(
+                rt,
+                {"id": due.get("team_id"), "tournament_id": due.get("tournament_id")},
+                due,
+                due.get("roster", []),
+            )
             pos = auto_pick(due["candidates"], due["roster"], rt.rng)
             mode = "TIMEOUT" if due["timed_out"] and not due["auto_draft"] else "AUTO"
             res = await rt.repo.pick(due["offer_id"], pos, due.get("user_id") or 0, mode, rt.s.auto_after_timeouts)

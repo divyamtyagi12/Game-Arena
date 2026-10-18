@@ -25,9 +25,18 @@ def open_bot_markup(ctx: AppContext) -> InlineKeyboardMarkup:
         "🤖 OPEN BOT", url=f"https://t.me/{ctx.bot_username}?start=ready")]])
 
 
+_last_lobby_refresh: dict[int, float] = {}
+
+
 async def refresh_lobby(ctx: AppContext, game_id: int, *, repost: bool = False) -> None:
     """Edit the existing lobby message (never spam). Re-posts only if it was deleted."""
     async with ctx.lock(("lobby", game_id)):
+        now = asyncio.get_running_loop().time()
+        last = _last_lobby_refresh.get(game_id, 0.0)
+        # If an edit just happened less than 0.8s ago, pause slightly to let other concurrent joins settle
+        if now - last < 0.8 and not repost:
+            await asyncio.sleep(0.5)
+
         game = await ctx.games.get(game_id)
         if not game:
             return
@@ -35,6 +44,7 @@ async def refresh_lobby(ctx: AppContext, game_id: int, *, repost: bool = False) 
         text = msg.lobby_text(game, players)
         markup = lobby_markup(game_id) if game["status"] == "LOBBY" else None
         old = game.get("lobby_message_id")
+        _last_lobby_refresh[game_id] = asyncio.get_running_loop().time()
         if old and not repost:
             if await safe_edit(ctx, game["group_id"], old, text, reply_markup=markup) != "gone":
                 return

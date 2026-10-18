@@ -58,12 +58,20 @@ async def run_league(ctx: AppContext, game_id: int) -> None:
             return
         todo = [m for m in matches if m["round_no"] == rn and (m["status"] != "DONE" or not m["notified"])]
         if todo:
-            outcomes = await asyncio.gather(
-                *(match_service.execute_match(ctx, m, title=f"⚔️ ROUND {rn}/{len(rounds)}") for m in todo),
-                return_exceptions=True)
+            tasks = []
+            for i, m in enumerate(todo):
+                async def _staggered(match_item=m, offset=i * 0.35):
+                    if offset > 0:
+                        await asyncio.sleep(offset)
+                    return await match_service.execute_match(ctx, match_item, title=f"⚔️ ROUND {rn}/{len(rounds)}")
+                tasks.append(_staggered())
+            outcomes = await asyncio.gather(*tasks, return_exceptions=True)
             errors = [o for o in outcomes if isinstance(o, BaseException)]
             if errors:
                 raise RuntimeError(f"{len(errors)} match(es) failed in round {rn}: {errors[0]!r}")
             await table_service.post_table(ctx, game_id, f"After round {rn}/{len(rounds)}")
+            # Cooldown between rounds to let Telegram rate limits replenish and update handlers breathe
+            if rn != rounds[-1]:
+                await asyncio.sleep(2.0)
 
     await final_service.start_final(ctx, game_id)

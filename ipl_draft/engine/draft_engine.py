@@ -192,6 +192,12 @@ def auto_pick(candidates: Sequence[Mapping], roster: Sequence[Mapping], rng: ran
     curr_n = remaining_role_needs(roster)
     allowed_cands = [c for c in candidates if is_pick_legal(roster, c.get("player", {}), curr_needs=curr_n)]
     if not allowed_cands:
+        for c in candidates:
+            p = c.get("player") or {}
+            if curr_n.get(p.get("role"), 0) > 0:
+                return c.get("pos") or c.get("position", 1)
+        if candidates:
+            return candidates[0].get("pos") or candidates[0].get("position", 1)
         raise RuntimeError("Draft dead-end: No legal candidate available in offer")
     n = needs(roster)
     rem = SQUAD - len(roster)

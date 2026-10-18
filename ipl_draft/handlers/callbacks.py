@@ -179,6 +179,65 @@ async def pick(rt, context, q, offer_id: int, pos: int) -> None:
     await safe_answer(q, "❌ This selection is already locked.", True)
 
 
+async def random_pick(rt, context, q, offer_id: int) -> None:
+    st, offer_data = await draft_service._own_open_offer(rt, q.from_user.id, offer_id)
+    if st != "OK" or not offer_data:
+        return await safe_answer(q, _OFFER_ERR.get(st, "⚠️ Invalid draft offer."), True)
+
+    from ..engine import draft_engine
+    team = offer_data["team"]
+    roster = await rt.repo.team_roster(team["id"])
+    players = roster["players"] if roster else []
+
+    offer_data = await draft_service.ensure_legal_candidates(rt, team, offer_data, players)
+    cands = offer_data.get("candidates") or []
+
+    legal_cands = [c for c in cands if draft_engine.is_pick_legal(players, c.get("player") or {})]
+
+    needs = draft_engine.remaining_role_needs(players)
+    wk_need = needs.get("WK", 0)
+    b_need = needs.get("BOWL", 0)
+    ar_need = needs.get("AR", 0)
+
+    chosen = None
+    if wk_need > 0:
+        wk_opts = [c for c in legal_cands if (c.get("player") or {}).get("role") == "WK"]
+        if wk_opts:
+            chosen = rt.rng.choice(wk_opts)
+    if not chosen and b_need > 0:
+        b_opts = [c for c in legal_cands if (c.get("player") or {}).get("role") == "BOWL"]
+        if b_opts:
+            chosen = rt.rng.choice(b_opts)
+    if not chosen and ar_need > 0:
+        ar_opts = [c for c in legal_cands if (c.get("player") or {}).get("role") == "AR"]
+        if ar_opts:
+            chosen = rt.rng.choice(ar_opts)
+    if not chosen and legal_cands:
+        chosen = rt.rng.choice(legal_cands)
+
+    if not chosen:
+        return await safe_answer(q, "⚠️ No legal players available to auto-assign right now.", True)
+
+    pos = chosen.get("pos") or chosen.get("position", 1)
+    res = await draft_service.confirm_pick(rt, q.from_user.id, offer_id, pos, q.message.message_id)
+    st = res.get("status")
+    if st == "OK":
+        pl = res.get("player") or {}
+        p_name = pl.get("name") or pl.get("display_name") or "Player"
+        return await safe_answer(q, f"✅ {p_name} auto-assigned!")
+    if st in ("ROLE_REQUIRED", "ILLEGAL_PICK"):
+        return await safe_answer(q, res.get("message", "⚠️ Role required to meet squad minimums!"), True)
+    if st == "ALREADY_HAVE":
+        return await safe_answer(q, res.get("message", "⚠️ This player is already in your squad!"), True)
+    if st == "ALREADY":
+        try:
+            await q.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        return await safe_answer(q, "✅ Pick already recorded!")
+    await safe_answer(q, "❌ This selection is already locked.", True)
+
+
 async def blocked_pick(rt, context, q, pos: int = 1) -> None:
     await safe_answer(q, "⚠️ You cannot pick this player: you still need required roles (3 bowlers, 1 keeper, 1 all-rounder)!", True)
 
@@ -461,5 +520,6 @@ ROUTES = {
     "br": bracket, "sc": scorecard, "sp": scorecard_p, "tr": table_refresh, "fp": fixtures_p,
     "mp": history_p, "ap": all_teams_p, "sm": summary, "lb": leaderboard, "pa": play_again,
     "bo": bo_start, "bop": bo_pick, "bou": bo_undo, "bor": bo_reset, "boc": bo_confirm, "nx": next_match,
+    "rnd": random_pick,
 }
 

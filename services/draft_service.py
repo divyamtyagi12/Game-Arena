@@ -97,7 +97,7 @@ async def send_prompt(ctx: AppContext, gp: dict) -> bool:
 async def handle_pick(ctx: AppContext, query, gp_id: int, cat_idx: int, pos: int) -> None:
     async def answer(text: str, alert: bool = False) -> None:
         try:
-            await query.answer(text, show_alert=alert)
+            await asyncio.wait_for(query.answer(text, show_alert=alert), timeout=4.0)
         except Exception:  # noqa: BLE001 - answering is best effort
             pass
 
@@ -124,8 +124,11 @@ async def handle_pick(ctx: AppContext, query, gp_id: int, cat_idx: int, pos: int
         raise
     await answer(f"✅ {char.name} selected!")
     if query.message:
-        await safe_edit(ctx, query.message.chat.id, query.message.message_id,
-                        msg.pick_locked_text(cat, char))
+        try:
+            await safe_edit(ctx, query.message.chat.id, query.message.message_id,
+                            msg.pick_locked_text(cat, char))
+        except Exception as exc:
+            log.warning("safe_edit pick locked text error: %s", exc)
     if len(picks) + 1 >= TEAM_SIZE:
         await finalize_player(ctx, gp_id)
     else:
@@ -204,14 +207,22 @@ async def autopick_expired(ctx: AppContext) -> None:
         if slow:
             await send_message(ctx, game["group_id"], "⏱️ Draft time is up — auto-picking for slow drafters.")
         for p in slow:
-            await autopick_player(ctx, p)
-        await try_begin_league(ctx, game["id"])
+            try:
+                await autopick_player(ctx, p)
+            except Exception as exc:
+                log.exception("Autopick failed for player %s in game %s: %s", p.get("id"), game["id"], exc)
+        try:
+            await try_begin_league(ctx, game["id"])
+        except Exception as exc:
+            log.exception("try_begin_league after autopick failed for game %s: %s", game["id"], exc)
 
 
 async def autopick_loop(ctx: AppContext) -> None:
     while True:
-        await asyncio.sleep(60)
         try:
+            await asyncio.sleep(60)
             await autopick_expired(ctx)
+        except asyncio.CancelledError:
+            raise
         except Exception:  # noqa: BLE001
-            log.exception("autopick loop error")
+            log.exception("autopick loop error (recovering)")

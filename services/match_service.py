@@ -45,8 +45,14 @@ async def execute_match(ctx: AppContext, match: dict, *, title: str, final: bool
         animated = False  # recovery: only deliver the static scorecard
     else:
         return None
-    await _deliver(ctx, p1, p2, result, title=title, final=final, animated=animated)
-    await ctx.matches.mark_notified(match["id"])
+    try:
+        await _deliver(ctx, p1, p2, result, title=title, final=final, animated=animated)
+    except Exception as exc:
+        log.warning("Match %s delivery encountered error: %s", match["id"], exc)
+    try:
+        await ctx.matches.mark_notified(match["id"])
+    except Exception as exc:
+        log.warning("Match %s mark_notified error: %s", match["id"], exc)
     return result
 
 

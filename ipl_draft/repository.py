@@ -191,6 +191,68 @@ class IplRepo:
     async def release_stale_reservations(self) -> int:
         return int(await self._r("ipl_release_stale_reservations") or 0)
 
+    async def get_legal_pool_players(self, tid: int, team_id: int, roles: list[str], limit: int = 4) -> list[dict]:
+        """Fetch available players from tournament pool (or catalog) matching roles, excluding team roster."""
+        try:
+            # 1. Get drafted IDs for this team
+            roster_res = await self.db.exec(lambda c: c.table("ipl_team_rosters").select("player_id").eq("team_id", team_id))
+            drafted_pids = {str(r["player_id"]) for r in (roster_res or []) if r.get("player_id")}
+
+            # 2. Get pool players for this tournament
+            pool_res = await self.db.exec(lambda c: c.table("ipl_tournament_pool").select("player_id").eq("tournament_id", tid))
+            pool_pids = [str(p["player_id"]) for p in (pool_res or []) if str(p.get("player_id")) not in drafted_pids]
+
+            players = []
+            if pool_pids:
+                pls = await self.db.exec(
+                    lambda c: c.table("ipl_players")
+                    .select("id, slug, full_name, display_name, role, bowling_type, nationality, batting_style, bowling_style")
+                    .in_("id", pool_pids)
+                    .in_("role", roles)
+                    .limit(limit)
+                )
+                if pls:
+                    players.extend(pls)
+
+            # 3. Fallback if pool is exhausted or missing roles
+            if len(players) < limit:
+                needed_cnt = limit - len(players)
+                existing_ids = drafted_pids.union({str(p["id"]) for p in players})
+                cat_pls = await self.db.exec(
+                    lambda c: c.table("ipl_players")
+                    .select("id, slug, full_name, display_name, role, bowling_type, nationality, batting_style, bowling_style")
+                    .eq("is_eligible", True)
+                    .in_("role", roles)
+                    .limit(needed_cnt * 4)
+                )
+                for cp in (cat_pls or []):
+                    if str(cp["id"]) not in existing_ids:
+                        players.append(cp)
+                        existing_ids.add(str(cp["id"]))
+                        if len(players) >= limit:
+                            break
+            return players
+        except Exception:
+            log.exception("IPL get_legal_pool_players failed for tid=%s, team=%s, roles=%s", tid, team_id, roles)
+            return []
+
+    async def replace_offer_candidates(self, offer_id: int, player_ids: list[str]) -> list[dict]:
+        """Replace the candidates of an open offer with the given player_ids, renumbering positions 1..N."""
+        try:
+            await self.db.exec(lambda c: c.table("ipl_draft_offer_candidates").delete().eq("offer_id", offer_id))
+            rows = [{"offer_id": offer_id, "position": idx + 1, "player_id": pid} for idx, pid in enumerate(player_ids)]
+            if rows:
+                await self.db.exec(lambda c: c.table("ipl_draft_offer_candidates").insert(rows))
+            try:
+                await self.db.exec(lambda c: c.table("ipl_player_reservations").delete().eq("offer_id", offer_id))
+            except Exception:
+                pass
+            res = await self.get_offer(offer_id)
+            return (res.get("candidates") if isinstance(res, dict) else []) or []
+        except Exception:
+            log.exception("IPL replace_offer_candidates failed for offer_id=%s", offer_id)
+            return []
+
     # ── system teams ──
     async def begin_system_teams(self, tid: int, franchises: list[dict]) -> dict:
         return await self._r("ipl_begin_system_teams", p_tid=tid, p_franchises=franchises)
