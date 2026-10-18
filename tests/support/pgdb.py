@@ -91,5 +91,105 @@ class PgDatabase:
             return None
         return json.loads(out)
 
-    async def exec(self, build) -> Any:                       # pragma: no cover - table access isn't used by IPL
-        raise NotImplementedError("PgDatabase only supports rpc()")
+    async def exec(self, build, **_kw) -> Any:
+        """Supabase-style table access (select/insert/update/delete/upsert + eq/neq/in_/limit/range) over psql."""
+        q = build(_Client())
+        if isinstance(q, _Query):
+            sql = q.sql()
+            out = await asyncio.to_thread(run_sql, sql)
+            return json.loads(out) if out else []
+        raise NotImplementedError("PgDatabase.exec only supports table() queries")
+
+
+def _lit(v: Any) -> str:
+    if v is None:
+        return "null"
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return str(v)
+    if isinstance(v, (dict, list)):
+        return f"{_q(json.dumps(v))}::jsonb"
+    return _q(str(v))
+
+
+def _ident(name: str) -> str:
+    if not name.replace("_", "").isalnum():
+        raise ValueError(f"bad identifier {name!r}")
+    return '"' + name + '"'
+
+
+class _Client:
+    def table(self, name: str) -> "_Query":
+        return _Query(name)
+
+
+class _Query:
+    def __init__(self, table: str) -> None:
+        self.t, self.op, self.cols, self.payload = table, "select", "*", None
+        self.where: list[str] = []
+        self._limit: int | None = None
+        self._offset = 0
+
+    def select(self, cols: str = "*"):
+        self.op, self.cols = "select", cols
+        return self
+
+    def insert(self, rows):
+        self.op, self.payload = "insert", rows
+        return self
+
+    def upsert(self, rows, **_kw):
+        self.op, self.payload = "upsert", rows
+        return self
+
+    def update(self, values: dict):
+        self.op, self.payload = "update", values
+        return self
+
+    def delete(self):
+        self.op = "delete"
+        return self
+
+    def eq(self, col, v):
+        self.where.append(f"{_ident(col)} = {_lit(v)}")
+        return self
+
+    def neq(self, col, v):
+        self.where.append(f"{_ident(col)} <> {_lit(v)}")
+        return self
+
+    def in_(self, col, values):
+        vals = list(values)
+        self.where.append(f"{_ident(col)} in ({', '.join(_lit(v) for v in vals)})" if vals else "false")
+        return self
+
+    def limit(self, n: int):
+        self._limit = int(n)
+        return self
+
+    def range(self, a: int, b: int):
+        self._offset, self._limit = int(a), int(b) - int(a) + 1
+        return self
+
+    def sql(self) -> str:
+        tbl = _ident(self.t)
+        w = (" where " + " and ".join(self.where)) if self.where else ""
+        if self.op == "select":
+            cols = ", ".join(_ident(c.strip()) for c in self.cols.split(",")) if self.cols.strip() != "*" else "*"
+            lim = f" limit {self._limit}" if self._limit is not None else ""
+            off = f" offset {self._offset}" if self._offset else ""
+            return f"select coalesce(jsonb_agg(to_jsonb(s)), '[]'::jsonb) from (select {cols} from {tbl}{w}{lim}{off}) s;"
+        if self.op in ("insert", "upsert"):
+            rows = self.payload if isinstance(self.payload, list) else [self.payload]
+            if not rows:
+                return "select '[]'::jsonb;"
+            keys = sorted({k for r in rows for k in r})
+            cols = ", ".join(_ident(k) for k in keys)
+            vals = ", ".join("(" + ", ".join(_lit(r.get(k)) for k in keys) + ")" for r in rows)
+            tail = " on conflict do nothing" if self.op == "upsert" else ""
+            return f"insert into {tbl} ({cols}) values {vals}{tail}; select '[]'::jsonb;"
+        if self.op == "update":
+            sets = ", ".join(f"{_ident(k)} = {_lit(v)}" for k, v in self.payload.items())
+            return f"update {tbl} set {sets}{w}; select '[]'::jsonb;"
+        return f"delete from {tbl}{w}; select '[]'::jsonb;"

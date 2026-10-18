@@ -176,7 +176,7 @@ async def pick(rt, context, q, offer_id: int, pos: int) -> None:
         except Exception:
             pass
         return await safe_answer(q, "✅ Pick already recorded!")
-    await safe_answer(q, "❌ This selection is already locked.", True)
+    await safe_answer(q, _OFFER_ERR.get(st, "❌ This selection is already locked."), True)
 
 
 async def random_pick(rt, context, q, offer_id: int) -> None:
@@ -235,7 +235,7 @@ async def random_pick(rt, context, q, offer_id: int) -> None:
         except Exception:
             pass
         return await safe_answer(q, "✅ Pick already recorded!")
-    await safe_answer(q, "❌ This selection is already locked.", True)
+    await safe_answer(q, _OFFER_ERR.get(st, "❌ This selection is already locked."), True)
 
 
 async def blocked_pick(rt, context, q, pos: int = 1) -> None:

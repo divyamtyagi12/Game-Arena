@@ -60,7 +60,7 @@ class FakeBot:
         if chat_id in self.blocked:
             raise Forbidden("blocked")
 
-    async def get_chat_member(self, chat_id, user_id):
+    async def get_chat_member(self, chat_id, user_id, **kwargs):
         class M: status = "administrator" if user_id in self.admins else "member"
         return M()
 

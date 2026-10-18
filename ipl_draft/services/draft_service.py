@@ -167,6 +167,9 @@ async def confirm_pick(rt: IplRuntime, user_id: int, offer_id: int, pos: int, me
         res_r = rt.repo.team_roster(offer["team_id"])
         roster = await res_r if asyncio.iscoroutine(res_r) else res_r
         players = roster["players"] if isinstance(roster, dict) and roster.get("players") else []
+        owner = (roster.get("team") or {}).get("user_id") if isinstance(roster, dict) else None
+        if owner is not None and owner != user_id:      # never reveal role/legality details of someone else's offer
+            return {"status": "NOT_YOURS"}
         cands = offer.get("candidates") or []
         cand = next((c for c in cands if c.get("pos") == pos or c.get("position") == pos), None)
         if cand:

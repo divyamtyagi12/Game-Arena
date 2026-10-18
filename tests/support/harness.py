@@ -89,11 +89,8 @@ class Harness:
         btns = [b for r in m.markup.inline_keyboard for b in r if b.callback_data.startswith("ipl:pk:")]
         b = choose(btns) if choose else rng.choice(btns)
         q = await self.click(b.callback_data, uid, chat=fakes.FakeChat(uid, "private"), message_id=m.message_id)
-        if q.answers and q.answers[-1][1]:
-            return False
-        offer, pos = b.callback_data.split(":")[2:4]
-        q = await self.click(f"ipl:cf:{offer}:{pos}", uid, chat=fakes.FakeChat(uid, "private"), message_id=m.message_id)
-        return bool(q.answers) and q.answers[-1][0] == "✅ Player drafted!"
+        # single-tap drafting: the pick button itself drafts the player (ipl:cf is a locked no-op)
+        return bool(q.answers) and not q.answers[-1][1] and q.answers[-1][0].startswith("✅")
 
     async def humans_unfinished(self, tid: int) -> int:
         return int(pgdb.run_sql(f"select count(*) from ipl_tournament_teams where tournament_id = {tid} and kind = 'HUMAN' and not squad_complete"))
@@ -125,7 +122,7 @@ class Harness:
                 await self.click(f"ipl:bop:{team['id']}:{pos}", u, chat=dm)
             if confirm:
                 q = await self.click(f"ipl:boc:{team['id']}", u, chat=dm)
-                assert q.answers and q.answers[-1][0] == "✅ Lineup confirmed!", q.answers
+                assert q.answers and q.answers[-1][0] in ("✅ Lineup confirmed!", "✅ Already confirmed."), q.answers   # the 11th pick auto-confirms
             state = await self.rt.repo.get_batting_order_state(team["id"])
             out[u] = [p["name"] for p in state["ordered"]]
         return out

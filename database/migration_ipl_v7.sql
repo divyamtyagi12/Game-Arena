@@ -79,6 +79,7 @@ begin
 
   -- If keeper is needed, guarantee options for WK (from pool, or catalog fallback)
   if wk_need > 0 then
+    deficit_ids := null;
     if legal_ids is not null then
       select array_agg(id) into deficit_ids from (
         select p.id
@@ -104,6 +105,7 @@ begin
 
   -- If bowlers are needed, guarantee options for BOWL
   if b_need > 0 then
+    deficit_ids := null;
     if legal_ids is not null then
       select array_agg(id) into deficit_ids from (
         select p.id
@@ -128,6 +130,7 @@ begin
 
   -- If all-rounders are needed, guarantee options for AR
   if ar_need > 0 then
+    deficit_ids := null;
     if legal_ids is not null then
       select array_agg(id) into deficit_ids from (
         select p.id
@@ -160,6 +163,11 @@ begin
     ) s;
     if rem_legal is not null then ids := ids || rem_legal; end if;
   end if;
+
+  -- Role guarantees may add up to 12 cards: de-duplicate and cap at 11 (offer positions are 1..11)
+  select coalesce(array_agg(x order by ord), '{}'::uuid[]) into ids from (
+    select x, min(ord) as ord from unnest(ids) with ordinality u(x, ord) group by x order by min(ord) limit 11
+  ) d;
 
   if ids is null or cardinality(ids) = 0 then
     return jsonb_build_object('status', 'POOL_EXHAUSTED', 'available', 0);

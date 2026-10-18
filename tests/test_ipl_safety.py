@@ -158,8 +158,8 @@ def test_double_click_and_race_exactly_one_pick():
         h, tid, humans = await _started(2)
         m = h.open_offer_for(1)
         offer = [b for r in m.markup.inline_keyboard for b in r if b.callback_data.startswith("ipl:pk:")][0].callback_data.split(":")[2]
-        qs = await asyncio.gather(*(h.click(f"ipl:cf:{offer}:{1 + i % 11}", 1, chat=fakes.FakeChat(1, "private")) for i in range(6)))
-        ok = [q for q in qs if q.answers[-1][0] == "✅ Player drafted!"]
+        qs = await asyncio.gather(*(h.click(f"ipl:pk:{offer}:{1 + i % 11}", 1, chat=fakes.FakeChat(1, "private")) for i in range(6)))
+        ok = [q for q in qs if q.answers[-1][0].startswith("✅") and q.answers[-1][0].endswith("selected!")]
         assert len(ok) == 1, [q.answers for q in qs]
         assert sql(f"select count(*) from ipl_draft_picks where offer_id={offer}") == "1"
         assert sql(f"select count(*) from ipl_team_rosters where tournament_id={tid} and team_id=(select team_id from ipl_draft_offers where id={offer})") == "1"
@@ -175,9 +175,11 @@ def test_wrong_user_stale_forged_and_cross_tournament_callbacks():
         pk = [b for r in m.markup.inline_keyboard for b in r if b.callback_data.startswith("ipl:pk:")][0].callback_data
         offer = pk.split(":")[2]
         dm2 = fakes.FakeChat(2, "private")
-        for data in (pk, f"ipl:cf:{offer}:1", f"ipl:bk:{offer}"):
-            q = await h.click(data, 2, chat=dm2)                                       # user 2 presses user 1's buttons
-            assert q.answers[-1][1] and "aren't yours" in q.answers[-1][0], (data, q.answers)
+        q = await h.click(pk, 2, chat=dm2)                                             # user 2 presses user 1's card
+        assert q.answers[-1][1] and "aren't yours" in q.answers[-1][0], (pk, q.answers)
+        for data in (f"ipl:cf:{offer}:1", f"ipl:bk:{offer}"):                          # legacy buttons are inert alerts
+            q = await h.click(data, 2, chat=dm2)
+            assert q.answers[-1][1] and "locked" in q.answers[-1][0], (data, q.answers)
         assert sql(f"select count(*) from ipl_draft_picks where tournament_id={tid} and team_id in (select id from ipl_tournament_teams where tournament_id={tid} and kind='HUMAN')") == "0"
         # user 2 cannot read user 1's squad
         team1 = sql(f"select id from ipl_tournament_teams where tournament_id={tid} and user_id=1")
@@ -327,7 +329,7 @@ def test_two_groups_run_independent_tournaments_in_parallel():
         ta, tb = (await h.run_to_end(a), await h.run_to_end(b))
         assert ta["state"] == tb["state"] == "COMPLETED"
         for tid in (a, b):
-            assert sql(f"select count(distinct (team_id, player_id)) from ipl_team_rosters where tournament_id={tid}") == "77"
+            assert sql(f"select count(distinct (team_id, player_id)) from ipl_team_rosters where tournament_id={tid}") == "66"
         assert sql("select count(*) from ipl_user_stats") == "4"
         assert sql(f"select count(*) from ipl_group_stats where group_id={GROUP}") == "2"
     run(go())
@@ -399,9 +401,9 @@ def test_crash_mid_league_resumes_without_duplicates_and_settle_is_idempotent():
         await simulation_worker.recover(h2.rt)
         t = await h2.run_to_end(tid)
         assert t["state"] == "COMPLETED"
-        assert sql(f"select count(*) from ipl_matches where tournament_id={tid} and stage='LEAGUE'") == "42"
+        assert sql(f"select count(*) from ipl_matches where tournament_id={tid} and stage='LEAGUE'") == "30"
         assert sql(f"select count(*) from (select fixture_id from ipl_matches group by 1 having count(*)>1) x") == "0"
-        assert sql(f"select sum(played) from ipl_standings where tournament_id={tid}") == "84"
+        assert sql(f"select sum(played) from ipl_standings where tournament_id={tid}") == "60"
     run(go())
 
 
@@ -428,7 +430,7 @@ def test_worker_failure_pauses_tournament_and_resume_continues():
         finally:
             simulation_worker.simulate_match = real
         assert sql(f"select state from ipl_tournaments where id={tid}") == "FAILED_RECOVERABLE"
-        assert any("iplresume" in m.text for m in h.ctx.bot.sent if m.chat_id == GROUP)
+        assert any("Tournament Paused" in m.text for m in h.ctx.bot.sent if m.chat_id == GROUP)   # auto-resumes; no /iplresume
         assert await h.rt.repo.resume(tid) == "LEAGUE_RUNNING"
         h.rt.failures.clear()
         t = await h.run_to_end(tid)

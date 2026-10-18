@@ -6,7 +6,7 @@ hidden ratings — so an auto-drafted human team gets no hidden help.
 from __future__ import annotations
 
 import random
-from typing import Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 SQUAD = 11
 SYSTEM_TEAMS = 4

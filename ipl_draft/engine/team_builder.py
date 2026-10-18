@@ -9,7 +9,7 @@ it only guarantees a playable shape, and humans may still pick 11 batters if the
 from __future__ import annotations
 
 import random
-from typing import Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 from .draft_engine import SQUAD, can_bowl, needs
 

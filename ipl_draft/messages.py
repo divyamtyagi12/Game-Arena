@@ -729,25 +729,6 @@ def champion_text(card: Mapping, champ: Mapping, owner: str | None) -> str:
     return (match_card_text(card, "🏆 <b>IPL DRAFT GRAND FINAL!</b>") + f"\n\n👑 <b>IPL DRAFT CHAMPION!</b>\n\n🏆 <b>{esc(champ['name'].upper())}</b>{own}\n\n{LINE}")
 
 
-AWARD_TITLES = {"CHAMPION": "👑 CHAMPION", "RUNNER_UP": "🥈 RUNNER-UP", "ORANGE_CAP": "🏏 ORANGE CAP",
-                "PURPLE_CAP": "🎯 PURPLE CAP", "PLAYER_OF_TOURNAMENT": "⭐ PLAYER OF THE TOURNAMENT",
-                "MOST_SIXES": "💥 MOST SIXES", "BEST_INNINGS": "🔥 BEST INDIVIDUAL INNINGS"}
-
-
-def awards_text(awards: Sequence[Mapping]) -> str:
-    by = {a["award"]: a for a in awards}
-    out = ["🏆 <b>IPL DRAFT AWARDS</b>", ""]
-    for k, title in AWARD_TITLES.items():
-        a = by.get(k)
-        if not a:
-            continue
-        who = a.get("player") or a.get("team") or ""
-        detail = f"\n{esc(a['value_text'])}" if a.get("player") and a.get("value_text") else ""
-        team = f" <i>({esc(a['team'])})</i>" if a.get("player") and a.get("team") else ""
-        out.append(f"{title}\n<b>{esc(who)}</b>{team}{detail}\n")
-    return "\n".join(out)
-
-
 # ───────────────────────── leaderboards / stats ─────────────────────────
 def _name(r: Mapping) -> str:
     return esc(r.get("first_name") or r.get("username") or f"User {r['user_id']}")

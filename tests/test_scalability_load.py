@@ -69,9 +69,13 @@ class TestScalabilityLoad(unittest.IsolatedAsyncioTestCase):
         rt = MagicMock(spec=IplRuntime)
         rt.repo = MagicMock()
         rt.repo.pick = AsyncMock(side_effect=mock_rpc_pick)
-        rt.repo.team_roster = AsyncMock(return_value={"team": {"user_id": 1, "id": 1, "auto_draft": False, "tournament_id": 1}, "players": []})
+        async def mock_team_roster(team_id):          # team N belongs to simulated user 1000 + N
+            return {"team": {"user_id": 1000 + team_id, "id": team_id, "auto_draft": False, "tournament_id": 1}, "players": []}
+        rt.repo.team_roster = AsyncMock(side_effect=mock_team_roster)
         rt.repo.open_offer = AsyncMock(return_value={"status": "OPEN", "offer_id": 99, "picks_done": 1, "candidates": []})
-        rt.repo.get_offer = AsyncMock(return_value={"id": 1, "team_id": 1, "tournament_id": 1, "candidates": []})
+        async def mock_get_offer(offer_id):
+            return {"id": offer_id, "team_id": offer_id, "tournament_id": 1, "candidates": []}
+        rt.repo.get_offer = AsyncMock(side_effect=mock_get_offer)
         rt.repo.set_offer_message = AsyncMock()
         rt.repo.get = AsyncMock(return_value={"id": 1, "state": "DRAFTING", "group_id": -100})
         rt.repo.draft_progress = AsyncMock(return_value=[])

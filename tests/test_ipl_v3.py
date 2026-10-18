@@ -40,21 +40,21 @@ def test_human_can_draft_a_player_already_on_an_ai_team_but_not_twice_in_one_xi(
         h, tid, humans = await _started(2)
         for _ in range(60):                                                     # let the AI franchises finish drafting
             await h.ctx.drain()
-            if sql(f"select count(*) from ipl_tournament_teams where tournament_id={tid} and kind='SYSTEM' and squad_complete") == "5":
+            if sql(f"select count(*) from ipl_tournament_teams where tournament_id={tid} and kind='SYSTEM' and squad_complete") == "4":
                 break
             await asyncio.sleep(0.2)
-        assert sql(f"select count(*) from ipl_tournament_teams where tournament_id={tid} and kind='SYSTEM' and squad_complete") == "5"
+        assert sql(f"select count(*) from ipl_tournament_teams where tournament_id={tid} and kind='SYSTEM' and squad_complete") == "4"
         ai_pid = sql(f"""select r.player_id from ipl_team_rosters r join ipl_tournament_teams t on t.id=r.team_id
                           where r.tournament_id={tid} and t.kind='SYSTEM' order by r.player_id limit 1""")
         ai_team = sql(f"select team_id from ipl_team_rosters where tournament_id={tid} and player_id='{ai_pid}' limit 1")
         offer = sql(f"select o.id from ipl_draft_offers o join ipl_tournament_teams t on t.id=o.team_id where t.user_id=1 and o.status='OPEN'")
         # rig ONE card of user 1's open offer to be the AI-owned cricketer (cards are normally random)
+        sql(f"delete from ipl_draft_offer_candidates where offer_id={offer} and player_id='{ai_pid}' and position<>1")   # keep (offer, player) unique
         sql(f"update ipl_draft_offer_candidates set player_id='{ai_pid}' where offer_id={offer} and position=1")
         dm = fakes.FakeChat(1, "private")
         m = h.open_offer_for(1)
-        await h.click(f"ipl:pk:{offer}:1", 1, chat=dm, message_id=m.message_id)
-        q = await h.click(f"ipl:cf:{offer}:1", 1, chat=dm, message_id=m.message_id)
-        assert q.answers[-1][0] == "✅ Player drafted!", q.answers
+        q = await h.click(f"ipl:pk:{offer}:1", 1, chat=dm, message_id=m.message_id)      # single tap: picking a card drafts him
+        assert q.answers[-1][0].startswith("✅") and q.answers[-1][0].endswith("selected!"), q.answers
         owners = sql(f"select string_agg(team_id::text, ',' order by team_id) from ipl_team_rosters where tournament_id={tid} and player_id='{ai_pid}'")
         team1_id = sql(f"select id from ipl_tournament_teams where tournament_id={tid} and user_id=1")
         # AI franchises draft independently, so he may sit in several AI squads; what matters is that the human got him too
@@ -80,7 +80,7 @@ def test_stats_are_separate_per_tournament_team_and_player():
         h, tid, humans = await _started(2)
         for _ in range(60):
             await h.ctx.drain()
-            if sql(f"select count(*) from ipl_tournament_teams where tournament_id={tid} and kind='SYSTEM' and squad_complete") == "5":
+            if sql(f"select count(*) from ipl_tournament_teams where tournament_id={tid} and kind='SYSTEM' and squad_complete") == "4":
                 break
             await asyncio.sleep(0.2)
         # share one AI cricketer with BOTH humans
@@ -88,12 +88,12 @@ def test_stats_are_separate_per_tournament_team_and_player():
                           where r.tournament_id={tid} and t.kind='SYSTEM' order by r.player_id limit 1""")
         for u in humans:
             offer = sql(f"select o.id from ipl_draft_offers o join ipl_tournament_teams t on t.id=o.team_id where t.user_id={u} and o.status='OPEN'")
+            sql(f"delete from ipl_draft_offer_candidates where offer_id={offer} and player_id='{ai_pid}' and position<>1")   # keep (offer, player) unique
             sql(f"update ipl_draft_offer_candidates set player_id='{ai_pid}' where offer_id={offer} and position=1")
             m = h.open_offer_for(u)
             dm = fakes.FakeChat(u, "private")
-            await h.click(f"ipl:pk:{offer}:1", u, chat=dm, message_id=m.message_id)
-            q = await h.click(f"ipl:cf:{offer}:1", u, chat=dm, message_id=m.message_id)
-            assert q.answers[-1][0] == "✅ Player drafted!", q.answers
+            q = await h.click(f"ipl:pk:{offer}:1", u, chat=dm, message_id=m.message_id)      # single tap: picking a card drafts him
+            assert q.answers[-1][0].startswith("✅") and q.answers[-1][0].endswith("selected!"), q.answers
         # AI franchises draft independently, so he may already be in several AI squads; both humans now own him too
         assert int(sql(f"select count(*) from ipl_team_rosters where tournament_id={tid} and player_id='{ai_pid}'")) >= 3
         await h.draft_all(humans, 7, tid)
@@ -163,7 +163,7 @@ def test_batting_order_survives_restart_deadline_autofill_and_drives_the_match()
                       where m.tournament_id={tid} and not i.is_super_over and tm.kind='HUMAN' and b.batting_pos <> r.batting_order""")
         assert bad == "0", f"{bad} scorecard rows deviate from the confirmed batting order"
         assert int(sql(f"""select count(*) from ipl_innings i join ipl_matches m on m.id=i.match_id
-                           where m.tournament_id={tid} and i.batting_team_id={t1['id']}""")) >= 12
+                           where m.tournament_id={tid} and i.batting_team_id={t1['id']}""")) >= 10   # 6 teams → 10 league matches each
     run(go())
 
 
