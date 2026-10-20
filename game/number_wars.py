@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from fractions import Fraction
 from typing import Mapping, Sequence
 
-MAX_HP = 8
+MAX_HP = 5
 NUMBER_MIN, NUMBER_MAX = 1, 100
 LOSE_DAMAGE = 1          # valid submission, not closest
 MISS_DAMAGE = 2          # no submission
