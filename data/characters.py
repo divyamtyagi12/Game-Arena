@@ -39,7 +39,7 @@ def _c(cid, name, series, stats, codes, abilities, description):
 
 CHARACTERS: list[dict] = [
     # ───────────────────────── Re:ZERO ─────────────────────────
-    _c("reinhard", "Reinhard van Astrea", RZ, (99, 97, 94, 60, 68), "ATS",
+    _c("reinhard", "Reinhard van Astrea", RZ, (99, 97, 94, 60, 68), "ATSH",
        ["Sword Saint", "Divine Protections", "Dragon Sword Reid"],
        "The Sword Saint, blessed with so many Divine Protections that he is nearly unbeatable."),
     _c("reid", "Reid Astrea", RZ, (97, 90, 91, 15, 70), "AS",
@@ -173,7 +173,7 @@ CHARACTERS: list[dict] = [
     _c("vanica", "Vanica Zogratis", BC, (92, 90, 88, 25, 62), "ATS",
        ["Devil Union", "Overwhelming Power", "Dark Triad Member"],
        "A devil-bound warrior whose sheer force is hard to withstand."),
-    _c("lucius", "Lucius Zogratis", BC, (97, 96, 92, 60, 92), "ATSI",
+    _c("lucius", "Lucius Zogratis", BC, (97, 96, 92, 60, 92), "ATSIH",
        ["Overwhelming Mana", "Devil-Class Power", "Calculated Ruthlessness"],
        "One of the most terrifying powers in the Black Clover world."),
     _c("finral", "Finral Roulacase", BC, (60, 60, 86, 35, 62), "S",
@@ -289,7 +289,7 @@ CHARACTERS: list[dict] = [
     _c("way_big", "Way Big", B10, (92, 99, 25, 10, 30), "T",
        ["Cosmic Size", "Cosmic Ray", "Colossal Frame"],
        "Omnitrix alien: a Cosmic Ray-powered giant towering over everything."),
-    _c("alien_x", "Alien X", B10, (99, 99, 95, 60, 95), "ATI",
+    _c("alien_x", "Alien X", B10, (99, 99, 95, 60, 95), "ATIH",
        ["Celestialsapien Power", "Reality Manipulation", "Three-Mind Debate"],
        "Omnitrix alien: a godlike Celestialsapien with near-limitless power."),
 ]

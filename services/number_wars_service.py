@@ -189,10 +189,10 @@ async def _match_loop(ctx: AppContext, match_id: int) -> None:
                     await asyncio.wait_for(ev.wait(), timeout=max(left, 0.0))
                 except asyncio.TimeoutError:
                     pass
-                current = await ctx.nw.get_match(match_id)
-                if not current or current["status"] != "ACTIVE":  # cancelled while waiting
-                    return
-                for _ in range(60):                               # the DB clock has the last word
+                while True:                                   # the DB clock has the last word
+                    current = await ctx.nw.get_match(match_id)
+                    if not current or current["status"] != "ACTIVE":   # cancelled while waiting
+                        return
                     state = await ctx.nw.close_round(rnd["id"])
                     if state != "OPEN":
                         break

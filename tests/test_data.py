@@ -37,11 +37,18 @@ def test_death_note_is_intelligence_only_and_physically_weak():
         assert by[k]["intelligence"] >= 95
 
 
+def test_healing_pool_size():
+    cat = build_catalog()
+    assert len(cat.pool("HEALING")) >= 16
+    for k in CATEGORY_KEYS:
+        assert len(cat.pool(k)) >= 15, k
+
+
 def test_spec_examples():
     by = {c["id"]: c for c in CHARACTERS}
     assert by["felix"]["categories"] == ["HEALING"]
     assert by["mimosa"]["categories"] == ["HEALING"]
-    assert set(by["reinhard"]["categories"]) == {"ATTACK", "TANKING", "SPEED"}
+    assert set(by["reinhard"]["categories"]) == {"ATTACK", "TANKING", "SPEED", "HEALING"}
     assert set(by["asta"]["categories"]) == {"ATTACK", "TANKING", "SPEED"}
     required = ["reinhard", "reid", "cecilus", "subaru", "emilia", "beatrice", "roswaal", "regulus", "garfiel",
                 "elsa", "wilhelm", "julius_j", "felix", "rem", "ram", "priscilla", "echidna", "otto", "crusch",

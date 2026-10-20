@@ -944,7 +944,12 @@ begin
            and not exists (select 1 from ipl_team_rosters r where r.team_id = p_team_id and r.player_id = p.id)
          order by random() limit 4
       ) s;
-      if deficit_ids is not null then ids := ids || deficit_ids; end if;
+      if deficit_ids is not null then
+        insert into ipl_tournament_pool (tournament_id, player_id)
+          select t.id, x from unnest(deficit_ids) x
+        on conflict do nothing;
+        ids := ids || deficit_ids;
+      end if;
     end if;
   end if;
 
@@ -968,7 +973,12 @@ begin
            and not exists (select 1 from ipl_team_rosters r where r.team_id = p_team_id and r.player_id = p.id)
          order by random() limit 4
       ) s;
-      if deficit_ids is not null then ids := ids || deficit_ids; end if;
+      if deficit_ids is not null then
+        insert into ipl_tournament_pool (tournament_id, player_id)
+          select t.id, x from unnest(deficit_ids) x
+        on conflict do nothing;
+        ids := ids || deficit_ids;
+      end if;
     end if;
   end if;
 
@@ -992,7 +1002,12 @@ begin
            and not exists (select 1 from ipl_team_rosters r where r.team_id = p_team_id and r.player_id = p.id)
          order by random() limit 4
       ) s;
-      if deficit_ids is not null then ids := ids || deficit_ids; end if;
+      if deficit_ids is not null then
+        insert into ipl_tournament_pool (tournament_id, player_id)
+          select t.id, x from unnest(deficit_ids) x
+        on conflict do nothing;
+        ids := ids || deficit_ids;
+      end if;
     end if;
   end if;
 
@@ -1006,6 +1021,11 @@ begin
     ) s;
     if rem_legal is not null then ids := ids || rem_legal; end if;
   end if;
+
+  -- Role guarantees may add up to 12 cards: de-duplicate and cap at 11 (offer positions are 1..11)
+  select coalesce(array_agg(x order by ord), '{}'::uuid[]) into ids from (
+    select x, min(ord) as ord from unnest(ids) with ordinality u(x, ord) group by x order by min(ord) limit 11
+  ) d;
 
   if ids is null or cardinality(ids) = 0 then
     return jsonb_build_object('status', 'POOL_EXHAUSTED', 'available', 0);

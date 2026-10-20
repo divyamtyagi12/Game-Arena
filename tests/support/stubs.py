@@ -41,6 +41,9 @@ def install() -> None:
                 self.text, self.callback_data, self.url = text, callback_data, url
             def __repr__(self): return f"Btn({self.text!r},{self.callback_data!r})"
 
+        class BotCommand:
+            def __init__(self, command, description): self.command, self.description = command, description
+
         class Markup:
             def __init__(self, inline_keyboard):
                 self.inline_keyboard = [list(r) for r in inline_keyboard]
@@ -58,7 +61,7 @@ def install() -> None:
             DEFAULT_TYPE = object
 
         _mod("telegram", InlineKeyboardButton=Btn, InlineKeyboardMarkup=Markup, Update=_Anything, Bot=_Anything,
-             BotCommand=_Anything, Message=_Anything, InputMediaPhoto=_Anything)
+             BotCommand=BotCommand, Message=_Anything, InputMediaPhoto=_Anything)
         _mod("telegram.constants", ChatType=ChatType, ParseMode=ParseMode, ChatAction=ChatAction)
         _mod("telegram.error", TelegramError=TelegramError, NetworkError=NetworkError, TimedOut=TimedOut,
              BadRequest=BadRequest, Forbidden=Forbidden, RetryAfter=RetryAfter)
@@ -71,8 +74,30 @@ def install() -> None:
         _mod("postgrest")
         _mod("postgrest.exceptions", APIError=APIError)
     if importlib.util.find_spec("supabase") is None:
-        _mod("supabase", Client=_Anything, create_client=lambda *a, **k: _Anything())
+        class ClientOptions:
+            def __init__(self, **k): self.__dict__.update(k)
+        pkg = _mod("supabase", Client=_Anything, create_client=lambda *a, **k: _Anything())
+        pkg.__path__ = []
+        _mod("supabase.client", ClientOptions=ClientOptions)
     if importlib.util.find_spec("httpx") is None:
         class TransportError(Exception): ...
         class TimeoutException(Exception): ...
         _mod("httpx", TransportError=TransportError, TimeoutException=TimeoutException)
+    if importlib.util.find_spec("pytest") is None:
+        import contextlib, unittest
+        class _Mark:
+            def __getattr__(self, n):
+                return lambda *a, **k: (a[0] if a and callable(a[0]) and not k else (lambda f: f))
+        class _Info: value = None
+        @contextlib.contextmanager
+        def raises(exc, match=None):
+            info = _Info()
+            try:
+                yield info
+            except exc as e:
+                info.value = e
+                return
+            raise AssertionError(f"DID NOT RAISE {exc}")
+        def skip(msg=""): raise unittest.SkipTest(msg)
+        _mod("pytest", mark=_Mark(), raises=raises, skip=skip,
+             fixture=lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda f: f)))

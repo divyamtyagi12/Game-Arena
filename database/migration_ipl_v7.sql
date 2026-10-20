@@ -99,7 +99,12 @@ begin
            and not exists (select 1 from ipl_team_rosters r where r.team_id = p_team_id and r.player_id = p.id)
          order by random() limit 4
       ) s;
-      if deficit_ids is not null then ids := ids || deficit_ids; end if;
+      if deficit_ids is not null then
+        insert into ipl_tournament_pool (tournament_id, player_id)
+          select t.id, x from unnest(deficit_ids) x
+        on conflict do nothing;
+        ids := ids || deficit_ids;
+      end if;
     end if;
   end if;
 
@@ -124,7 +129,12 @@ begin
            and not exists (select 1 from ipl_team_rosters r where r.team_id = p_team_id and r.player_id = p.id)
          order by random() limit 4
       ) s;
-      if deficit_ids is not null then ids := ids || deficit_ids; end if;
+      if deficit_ids is not null then
+        insert into ipl_tournament_pool (tournament_id, player_id)
+          select t.id, x from unnest(deficit_ids) x
+        on conflict do nothing;
+        ids := ids || deficit_ids;
+      end if;
     end if;
   end if;
 
@@ -149,7 +159,12 @@ begin
            and not exists (select 1 from ipl_team_rosters r where r.team_id = p_team_id and r.player_id = p.id)
          order by random() limit 4
       ) s;
-      if deficit_ids is not null then ids := ids || deficit_ids; end if;
+      if deficit_ids is not null then
+        insert into ipl_tournament_pool (tournament_id, player_id)
+          select t.id, x from unnest(deficit_ids) x
+        on conflict do nothing;
+        ids := ids || deficit_ids;
+      end if;
     end if;
   end if;
 

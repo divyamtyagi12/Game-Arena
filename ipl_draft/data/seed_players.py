@@ -297,7 +297,7 @@ SEED_PLAYERS: list[tuple[str, str, str, str, str, str]] = [
     ("Glenn Phillips", "WK", "New Zealand", "R", "S", "B"),
     ("Martin Guptill", "BAT", "New Zealand", "R", "S", "C"),
     ("Ross Taylor", "BAT", "New Zealand", "R", "-", "C"),
-    ("Finn Allen", "BAT", "New Zealand", "R", "-", "C"),
+    ("Finn Allen", "WK", "New Zealand", "R", "-", "C"),
     ("Colin Munro", "BAT", "New Zealand", "L", "P", "C"),
     ("Daryl Mitchell", "AR", "New Zealand", "R", "P", "B"),
     ("Mitchell Santner", "AR", "New Zealand", "L", "S", "B"),

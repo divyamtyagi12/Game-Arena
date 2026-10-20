@@ -84,6 +84,16 @@ OVERSEAS_PLAYERS_2026: set[str] = {
 }
 
 
+def _norm(s: str) -> str:
+    return " ".join(str(s).casefold().split())
+
+KEEPER_NAMES = {_norm(n) for n in (
+    "Phil Salt", "Finn Allen", "Ryan Rickelton", "MS Dhoni", "Sanju Samson",
+    "Quinton de Kock", "Jitesh Sharma")}
+_OFFICIAL_N = {code: {_norm(n) for n in names} for code, names in OFFICIAL_IPL_2026_SQUADS.items()}
+_OVERSEAS_N = {_norm(n) for n in OVERSEAS_PLAYERS_2026}
+
+
 def validate_system_team_squad(team_id: int, playing_xi: Sequence[Any], franchise_code: str) -> tuple[bool, str]:
     """Validates that a computer-controlled system franchise Playing XI strictly conforms to IPL rules:
     1. Exactly 11 players.
@@ -93,15 +103,16 @@ def validate_system_team_squad(team_id: int, playing_xi: Sequence[Any], franchis
     5. Maximum 4 overseas players.
     6. Contains at least one wicketkeeper (role == 'WK').
     """
-    if franchise_code not in OFFICIAL_IPL_2026_SQUADS:
+    if franchise_code not in _OFFICIAL_N:
         return False, f"Unknown system franchise code: {franchise_code}"
 
     if len(playing_xi) != 11:
         return False, f"System team {franchise_code} must have exactly 11 players (got {len(playing_xi)})"
 
-    official_squad = OFFICIAL_IPL_2026_SQUADS[franchise_code]
+    official_squad = _OFFICIAL_N[franchise_code]
 
     names: list[str] = []
+    norm_names: list[str] = []
     wk_count = 0
     overseas_count = 0
 
@@ -119,18 +130,20 @@ def validate_system_team_squad(team_id: int, playing_xi: Sequence[Any], franchis
             role = ""
             nationality = None
 
+        nname = _norm(name)
         names.append(name)
+        norm_names.append(nname)
 
-        if name not in official_squad:
+        if nname not in official_squad:
             return False, f"Player '{name}' does not belong to {franchise_code} verified IPL 2026 squad"
 
-        if (nationality and nationality not in ("India", "Indian")) or name in OVERSEAS_PLAYERS_2026:
+        if (nationality and nationality not in ("India", "Indian")) or nname in _OVERSEAS_N:
             overseas_count += 1
 
-        if role == "WK" or name in ("Phil Salt", "Finn Allen", "Ryan Rickelton", "MS Dhoni", "Sanju Samson"):
+        if role == "WK" or nname in KEEPER_NAMES:
             wk_count += 1
 
-    if len(set(names)) != 11:
+    if len(set(norm_names)) != 11:
         return False, f"Duplicate players detected in {franchise_code} Playing XI: {names}"
 
     if overseas_count > 4:

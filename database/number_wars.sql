@@ -261,8 +261,8 @@ begin
        where round_id = p_round_id and user_id = x.user_id;
     end if;
     update nw_players set
-      hp               = greatest(0, least(8, hp + x.hp_delta)),
-      alive            = greatest(0, least(8, hp + x.hp_delta)) > 0,
+      hp               = greatest(0, least(5, hp + x.hp_delta)),
+      alive            = greatest(0, least(5, hp + x.hp_delta)) > 0,
       round_wins       = round_wins + (case when x.is_winner then 1 else 0 end),
       total_distance   = total_distance + coalesce(x.distance, 0),
       eliminated_round = case when hp + x.hp_delta <= 0 then r.round_number else eliminated_round end

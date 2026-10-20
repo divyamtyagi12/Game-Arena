@@ -1018,6 +1018,10 @@ def test_playoff_messages_pop_one_by_one_matching_image_1():
     assert "Rashid Khan — 31 wickets (in Manish's XI)" in mvp_text
 
 
-
-
+def test_validate_system_team_squad_case_and_whitespace_insensitivity():
+    from ipl_draft.engine.team_builder import SYSTEM_PLAYING_XI, validate_system_team_squad
+    kkr_xi = [{"name": f"  {n.upper()}  ", "role": "BAT"} for n in SYSTEM_PLAYING_XI["KKR"]]
+    ok, err = validate_system_team_squad(1, kkr_xi, "KKR")
+    assert ok is True, err
+    assert err == "OK"
 
