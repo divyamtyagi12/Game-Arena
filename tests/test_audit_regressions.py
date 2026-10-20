@@ -490,3 +490,43 @@ class TestAuditRegressions(unittest.IsolatedAsyncioTestCase):
             await callbacks.random_pick(self.rt, mock_context, mock_q, 100)
             mock_ans.assert_called_once()
             assert "MS Dhoni auto-assigned!" in mock_ans.call_args[0][1]
+
+    async def test_finalize_announces_awards_with_names_from_repo(self):
+        """Finalize must re-read awards from repo so player and team names are present in m.awards_text."""
+        t = {
+            "id": 42,
+            "state": "COMPLETED",
+            "group_id": -10042,
+            "final_announced": False,
+            "champion_announced": True,
+            "mvp_announced": False,
+            "final_dms_sent": True,
+            "awards_recorded": True,
+            "champion_team_id": 1,
+            "runner_up_team_id": 2,
+        }
+        self.repo.get = AsyncMock(return_value=t)
+        self.repo.all_teams = AsyncMock(return_value=[
+            {"id": 1, "name": "CSK", "kind": "HUMAN", "user_id": 111},
+            {"id": 2, "name": "MI", "kind": "SYSTEM"},
+        ])
+        self.repo.player_stats = AsyncMock(return_value=[])
+        self.repo.update = AsyncMock()
+        self.repo.record_results = AsyncMock()
+        # repo.awards returns hydrated awards with 'player' and 'team' names
+        self.repo.awards = AsyncMock(return_value=[
+            {"award": "ORANGE_CAP", "player": "Virat Kohli", "team": "RCB", "value_text": "650 runs (14 inns)"},
+            {"award": "PURPLE_CAP", "player": "Jasprit Bumrah", "team": "MI", "value_text": "24 wickets (econ 6.50)"},
+        ])
+        self.repo.lease = AsyncMock(return_value=True)
+        self.repo.release_lease = AsyncMock(return_value=True)
+
+        with patch("ipl_draft.services.notification_service.group", new_callable=AsyncMock) as mock_group:
+            await simulation_worker.finalize(self.rt, 42)
+            self.repo.awards.assert_called_once_with(42)
+            assert mock_group.called
+            announced_text = mock_group.call_args_list[0][0][2]
+            assert "Virat Kohli" in announced_text
+            assert "RCB" in announced_text
+            assert "Jasprit Bumrah" in announced_text
+            assert "<b></b>" not in announced_text

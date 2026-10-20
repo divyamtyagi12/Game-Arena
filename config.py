@@ -91,6 +91,9 @@ def load_settings() -> Settings:
     webhook_url = os.getenv("WEBHOOK_URL", "").strip()
     if run_mode == "webhook" and not webhook_url:
         raise ConfigError("WEBHOOK_URL is required when RUN_MODE=webhook")
+    webhook_secret = os.getenv("WEBHOOK_SECRET", "").strip()
+    if run_mode == "webhook" and not webhook_secret:
+        raise ConfigError("WEBHOOK_SECRET is required when RUN_MODE=webhook")
 
     min_players = _int("MIN_PLAYERS", 3, lo=2, hi=16)
     max_players = _int("MAX_PLAYERS", 8, lo=min_players, hi=16)

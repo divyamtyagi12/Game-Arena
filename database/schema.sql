@@ -207,6 +207,13 @@ begin
   if exists (select 1 from game_players where game_id = p_game_id and user_id = p_user_id) then
     return 'ALREADY';
   end if;
+  if exists (
+    select 1 from game_players gp
+    join games g2 on g2.id = gp.game_id
+    where gp.user_id = p_user_id and g2.id <> p_game_id and g2.status in ('LOBBY', 'DRAFTING', 'LEAGUE', 'FINAL')
+  ) then
+    return 'OTHER_GAME';
+  end if;
   select count(*) into cnt from game_players where game_id = p_game_id;
   if cnt >= g.max_players then return 'FULL'; end if;
   insert into game_players (game_id, user_id, display_name) values (p_game_id, p_user_id, p_name);

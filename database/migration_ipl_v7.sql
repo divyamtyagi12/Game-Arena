@@ -201,3 +201,24 @@ returns jsonb language sql stable security definer set search_path = public, ipl
   where p.is_eligible;
 $$;
 
+-- ════════════════════════════════════════════════════════════════════
+--  SECURITY: RLS on, no policies; functions only for service_role
+-- ════════════════════════════════════════════════════════════════════
+do $$
+declare r record;
+begin
+  for r in select tablename from pg_tables where schemaname = 'public' and tablename like 'ipl\_%' loop
+    execute format('alter table public.%I enable row level security', r.tablename);
+    execute format('revoke all on table public.%I from public, anon, authenticated', r.tablename);
+  end loop;
+  for r in select tablename from pg_tables where schemaname = 'ipl_private' loop
+    execute format('alter table ipl_private.%I enable row level security', r.tablename);
+    execute format('revoke all on table ipl_private.%I from public, anon, authenticated', r.tablename);
+  end loop;
+  for r in select p.oid::regprocedure as sig from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+            where n.nspname = 'public' and p.proname like 'ipl\_%' loop
+    execute format('revoke all on function %s from public, anon, authenticated', r.sig);
+    execute format('grant execute on function %s to service_role', r.sig);
+  end loop;
+end $$;
+

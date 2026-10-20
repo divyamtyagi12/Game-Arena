@@ -57,7 +57,8 @@ async def lobby_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         name = _display_name(user, [p["display_name"] for p in players])
         res = await ctx.games.join(game_id, user.id, name)
         texts = {"OK": "⚔️ You joined the draft!", "ALREADY": "✅ You've already joined.",
-                 "FULL": "🚫 The lobby is full.", "CLOSED": "⚠️ This lobby is closed."}
+                 "FULL": "🚫 The lobby is full.", "CLOSED": "⚠️ This lobby is closed.",
+                 "OTHER_GAME": "⚠️ You're already in an active game in another group!"}
         await safe_answer(q, texts.get(res, "⚠️ Could not join."), res != "OK")
         if res == "OK":
             await lobby_service.refresh_lobby(ctx, game_id)

@@ -119,6 +119,13 @@ begin
   if exists (select 1 from nw_players where match_id = p_match_id and user_id = p_user_id) then
     return 'ALREADY';
   end if;
+  if exists (
+    select 1 from nw_players np
+    join nw_matches m2 on m2.id = np.match_id
+    where np.user_id = p_user_id and m2.id <> p_match_id and m2.status in ('LOBBY', 'ACTIVE')
+  ) then
+    return 'OTHER_MATCH';
+  end if;
   select count(*) into cnt from nw_players where match_id = p_match_id;
   if cnt >= m.max_players then return 'FULL'; end if;
   insert into nw_players (match_id, user_id, display_name) values (p_match_id, p_user_id, p_name);

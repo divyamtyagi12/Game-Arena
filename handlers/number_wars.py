@@ -84,7 +84,8 @@ async def _lobby_action(ctx: AppContext, context, q, action: str, match_id: int)
         players = await ctx.nw.players(match_id)
         res = await ctx.nw.join(match_id, user.id, _display_name(user, [p["display_name"] for p in players]))
         texts = {"OK": "🔢 You joined Number Wars!", "ALREADY": "✅ You've already joined.",
-                 "FULL": "🚫 The lobby is full.", "CLOSED": "⚠️ This lobby is closed."}
+                 "FULL": "🚫 The lobby is full.", "CLOSED": "⚠️ This lobby is closed.",
+                 "OTHER_MATCH": "⚠️ You're already in an active Number Wars match in another group!"}
         await safe_answer(q, texts.get(res, "⚠️ Could not join."), res != "OK")
         if res == "OK":
             await svc.refresh_lobby(ctx, match_id)

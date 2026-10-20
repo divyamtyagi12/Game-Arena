@@ -191,7 +191,7 @@ async def _simulate(rt: IplRuntime, t: dict, fx: dict, squads: dict[int, Squad])
         a_name = a_team["name"] if a_team else "Away"
         init_text = (f"🏏 <b>IPL DRAFT — {stage_label}</b>\n\n"
                      f"<b>{m.esc(h_name)}</b> vs <b>{m.esc(a_name)}</b>\n\n"
-                     "🪙 <i>Toss underway & players taking the field…</i>")
+                     "🪙 <i>Toss underway &amp; players taking the field…</i>")
         for h in humans:
             try:
                 sent = await notify.dm(rt, h["user_id"], init_text)
@@ -486,8 +486,21 @@ async def finalize(rt: IplRuntime, tid: int) -> None:
             # Step 4: Tournament Awards and MVPs announcement in group (deliver once)
             if not t.get("mvp_announced"):
                 try:
-                    if computed_awards:
-                        await notify.group(rt, t["group_id"], m.awards_text(computed_awards))
+                    awards = None
+                    if hasattr(rt.repo, "awards"):
+                        res_aw = rt.repo.awards(tid)
+                        awards = await res_aw if inspect.isawaitable(res_aw) else res_aw
+                    if not awards and computed_awards:
+                        # Fallback: if DB hasn't populated or returned empty, populate names from stats and teams
+                        stats_by_id = {p.get("player_id"): p for p in stats if p.get("player_id")}
+                        for ca in computed_awards:
+                            if not ca.get("player") and ca.get("player_id") in stats_by_id:
+                                ca["player"] = stats_by_id[ca["player_id"]].get("name", "")
+                            if not ca.get("team") and ca.get("team_id") in teams:
+                                ca["team"] = teams[ca["team_id"]].get("name", "")
+                        awards = computed_awards
+                    if awards:
+                        await notify.group(rt, t["group_id"], m.awards_text(awards))
                     mvps = await compute_human_mvps(rt, tid)
                     if mvps and (mvps.get("most_runs") or mvps.get("most_wickets")):
                         await notify.group(rt, t["group_id"], m.format_mvps_text(mvps))

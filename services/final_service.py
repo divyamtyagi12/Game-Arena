@@ -21,6 +21,12 @@ async def start_final(ctx: AppContext, game_id: int) -> None:
     top1, top2 = ranked[0], ranked[1]
     info = await ctx.games.begin_final(game_id, top1["game_player_id"], top2["game_player_id"])
     if not info:  # league not fully finished (or cancelled)
+        game = await ctx.games.get(game_id)
+        if game and game["status"] == "LEAGUE":
+            all_m = await ctx.matches.list_for_game(game_id, "LEAGUE")
+            unfinished = [m for m in all_m if m["status"] != "DONE"]
+            if unfinished:
+                raise RuntimeError(f"begin_final refused to start: {len(unfinished)} league matches are unfinished")
         return
     match = await ctx.matches.get(info["match_id"])
     n1, n2 = names[match["p1_id"]], names[match["p2_id"]]

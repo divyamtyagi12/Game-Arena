@@ -152,6 +152,14 @@ async def run_match(ctx: AppContext, match_id: int, *, initial_delay: float = 0.
             except Exception:
                 log.exception("Number Wars match %s failed (attempt %d/3)", match_id, attempt)
                 await asyncio.sleep(2 + 3 * attempt)
+        else:
+            log.error("Number Wars match %s runner failed all 3 attempts", match_id)
+            match = await ctx.nw.get_match(match_id)
+            if match and match.get("group_id"):
+                await send_message(ctx, match["group_id"],
+                                   "⚠️ <b>Number Wars match paused</b>\n\n"
+                                   "The match runner encountered an error and paused. "
+                                   "Progress is saved in the database.")
     finally:
         ctx.running_nw.discard(match_id)
         ctx.nw_events.pop(match_id, None)
