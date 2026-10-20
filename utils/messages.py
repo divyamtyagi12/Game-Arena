@@ -271,7 +271,11 @@ def _plural(n: int, one: str, many: str | None = None) -> str:
 
 
 def leaderboard_menu_text() -> str:
-    return "🏆 <b>ANIME DRAFT LEADERBOARD</b>\n\nChoose which leaderboard you want to view."
+    return "🏆 <b>GAME ARENA LEADERBOARDS</b>\n\nChoose which game's leaderboard you want to view."
+
+
+def anime_draft_leaderboard_menu_text() -> str:
+    return "⚔️ <b>ANIME DRAFT LEADERBOARD</b>\n\nChoose which leaderboard you want to view."
 
 
 def global_leaderboard_text(data: Mapping[str, Any], page: int, page_size: int) -> str:

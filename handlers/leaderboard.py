@@ -30,11 +30,18 @@ CRITERIA = ("champs", "wins", "winrate")
 
 def menu_markup() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [Btn("🌍 GLOBAL LEADERBOARD", callback_data="lbd:g:0")],
-        [Btn("👥 GROUP LEADERBOARD", callback_data="lbd:pick")],
+        [Btn("⚔️ ANIME DRAFT", callback_data="lbd:ad")],
         [Btn("🔢 NUMBER WARS", callback_data="nwl:g")],
         [Btn("🏏 IPL DRAFT", callback_data="ipl:lb:g:0")],
         [Btn("🏠 BACK", callback_data="lbd:home")],
+    ])
+
+
+def anime_draft_menu_markup() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [Btn("🌍 GLOBAL LEADERBOARD", callback_data="lbd:g:0")],
+        [Btn("👥 GROUP LEADERBOARD", callback_data="lbd:pick")],
+        [Btn("🔙 BACK", callback_data="lbd:menu")],
     ])
 
 
@@ -43,7 +50,7 @@ def global_markup(page: int) -> InlineKeyboardMarkup:
         [Btn("◀️ PREVIOUS", callback_data=f"lbd:g:{max(page - 1, 0)}"),
          Btn("NEXT ▶️", callback_data=f"lbd:g:{page + 1}")],
         [Btn("👥 GROUP", callback_data="lbd:pick"), Btn("🔄 REFRESH", callback_data=f"lbd:g:{page}")],
-        [Btn("🔙 BACK", callback_data="lbd:menu")],
+        [Btn("🔙 BACK", callback_data="lbd:ad")],
     ])
 
 
@@ -56,7 +63,7 @@ def group_markup(group_id: int, crit: str, page: int) -> InlineKeyboardMarkup:
         [Btn(label("winrate", "📊 WIN RATE"), callback_data=f"lbd:grp:{group_id}:winrate:0")],
         [Btn("◀️", callback_data=f"lbd:grp:{group_id}:{crit}:{max(page - 1, 0)}"),
          Btn("▶️", callback_data=f"lbd:grp:{group_id}:{crit}:{page + 1}")],
-        [Btn("🌍 GLOBAL", callback_data="lbd:g:0"), Btn("🔙 BACK", callback_data="lbd:menu")],
+        [Btn("🌍 GLOBAL", callback_data="lbd:g:0"), Btn("🔙 BACK", callback_data="lbd:ad")],
     ])
 
 
@@ -108,7 +115,7 @@ async def _pick(ctx, q) -> None:
     await safe_answer(q)
     rows = [[Btn(f"📍 {(g['title'] or 'Group')[:40]}", callback_data=f"lbd:grp:{g['group_id']}:champs:0")]
             for g in groups]
-    rows.append([Btn("🔙 BACK", callback_data="lbd:menu")])
+    rows.append([Btn("🔙 BACK", callback_data="lbd:ad")])
     await _show(ctx, q, msg.group_picker_text(bool(groups)), InlineKeyboardMarkup(rows))
 
 
@@ -135,6 +142,9 @@ async def leaderboard_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         if action == "menu":
             await safe_answer(q)
             await _show(ctx, q, msg.leaderboard_menu_text(), menu_markup())
+        elif action == "ad":
+            await safe_answer(q)
+            await _show(ctx, q, msg.anime_draft_leaderboard_menu_text(), anime_draft_menu_markup())
         elif action == "home":
             await safe_answer(q)
             if q.message.chat.type == ChatType.PRIVATE:
