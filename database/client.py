@@ -17,6 +17,9 @@ from postgrest.exceptions import APIError
 from supabase import Client, create_client
 from supabase.client import ClientOptions
 
+import sys
+import threading
+
 log = logging.getLogger(__name__)
 
 
@@ -30,27 +33,37 @@ def is_unique_violation(exc: BaseException) -> bool:
 
 class Database:
     def __init__(self, url: str, key: str, max_workers: int = 25, query_timeout: float = 15.0) -> None:
+        self._url = url
+        self._key = key
+        self._query_timeout = query_timeout
         opts = ClientOptions(postgrest_client_timeout=query_timeout)
         self._client: Client = create_client(url, key, options=opts)
+        self._local = threading.local()
         self._executor = concurrent.futures.ThreadPoolExecutor(
             max_workers=max_workers, thread_name_prefix="db-pool"
         )
-        self._query_timeout = query_timeout
+
+    def _get_thread_client(self) -> Client:
+        client = getattr(self._local, "client", None)
+        if client is None:
+            opts = ClientOptions(postgrest_client_timeout=self._query_timeout)
+            client = create_client(self._url, self._key, options=opts)
+            self._local.client = client
+        return client
 
     async def exec(self, build: Callable[[Client], Any], *, retries: int = 3, timeout: float | None = None) -> Any:
         """`build(client)` returns a postgrest request; we execute it in a dedicated thread pool and return `.data`."""
         effective_timeout = timeout or self._query_timeout
 
         def _run() -> Any:
-            return build(self._client).execute().data
+            client = self._get_thread_client()
+            return build(client).execute().data
 
-        # Caller identification for structured slow query logging
+        # Fast caller identification without expensive inspect.stack()
         caller_name = "unknown"
         try:
-            stack = inspect.stack()
-            if len(stack) > 1:
-                frame = stack[1]
-                caller_name = f"{frame.function}:{frame.lineno}"
+            frame = sys._getframe(1)
+            caller_name = f"{frame.f_code.co_name}:{frame.f_lineno}"
         except Exception:
             pass
 

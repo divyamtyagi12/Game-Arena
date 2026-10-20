@@ -59,6 +59,21 @@ async def _edit(rt, q, text: str, markup=None) -> None:
 
 import inspect
 
+_ROUTE_ARG_LIMITS: dict[Any, tuple[int, int, bool]] = {}
+
+def _get_arg_limits(fn) -> tuple[int, int, bool]:
+    lims = _ROUTE_ARG_LIMITS.get(fn)
+    if lims is None:
+        sig = inspect.signature(fn)
+        params = list(sig.parameters.values())[3:]  # Skip (rt, context, q)
+        has_varargs = any(p.kind == inspect.Parameter.VAR_POSITIONAL for p in sig.parameters.values())
+        min_args = len([p for p in params if p.default is inspect.Parameter.empty and p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)])
+        max_args = len([p for p in params if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)])
+        lims = (min_args, max_args, has_varargs)
+        _ROUTE_ARG_LIMITS[fn] = lims
+    return lims
+
+
 async def ipl_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     rt = get_rt(context)
     q = update.callback_query
@@ -79,12 +94,8 @@ async def ipl_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if fn is None:
         return await safe_answer(q, "⚠️ Invalid button.")
 
-    # Explicitly validate callback argument count before execution (Bug 9)
-    sig = inspect.signature(fn)
-    params = list(sig.parameters.values())[3:]  # Skip (rt, context, q)
-    has_varargs = any(p.kind == inspect.Parameter.VAR_POSITIONAL for p in sig.parameters.values())
-    min_args = len([p for p in params if p.default is inspect.Parameter.empty and p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)])
-    max_args = len([p for p in params if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)])
+    # Explicitly validate callback argument count before execution (Bug 9) - cached limits
+    min_args, max_args, has_varargs = _get_arg_limits(fn)
 
     if len(args) < min_args or (not has_varargs and len(args) > max_args):
         log.warning("Callback argument mismatch for '%s': expected %d..%d, got %d (%s)", action, min_args, max_args, len(args), q.data)

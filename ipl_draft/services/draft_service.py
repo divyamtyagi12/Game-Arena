@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import time
 
@@ -97,7 +98,8 @@ async def ensure_legal_candidates(
 
     try:
         needed_roles = missing_roles if missing_roles else (["WK"] if wk_need > 0 else ["BOWL", "AR", "BAT"])
-        extra_players = await rt.repo.get_legal_pool_players(tid, team_id, needed_roles, limit=4)
+        res_pool = rt.repo.get_legal_pool_players(tid, team_id, needed_roles, limit=4)
+        extra_players = await res_pool if inspect.isawaitable(res_pool) else res_pool
         if not extra_players:
             return offer
 
@@ -111,7 +113,8 @@ async def ensure_legal_candidates(
             if len(new_player_ids) >= 11:
                 break
 
-        updated_cands = await rt.repo.replace_offer_candidates(offer_id, new_player_ids)
+        res_cands = rt.repo.replace_offer_candidates(offer_id, new_player_ids)
+        updated_cands = await res_cands if inspect.isawaitable(res_cands) else res_cands
         if updated_cands:
             offer["candidates"] = updated_cands
         else:
