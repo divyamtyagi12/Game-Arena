@@ -13,22 +13,22 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install Railway CLI
-        run: npm install -g @railway/cli
-
-      - name: Deploy to Railway
+      - name: Trigger Railway Deploy Latest Commit
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
         run: |
-          if [ -n "$RAILWAY_TOKEN" ]; then
-            echo "Deploying via Railway CLI (railway up)..."
-            railway up --service f51723ed-ff72-451b-913e-905655829cdf --detach
-            echo "Triggering environment deploy via Railway GraphQL API..."
-            curl -s -X POST https://backboard.railway.app/graphql/v2 \
-              -H "Authorization: Bearer $RAILWAY_TOKEN" \
-              -H "Content-Type: application/json" \
-              -d '{"query":"mutation { environmentTriggersDeploy(input: { environmentId: \"c7d99b85-b979-479f-ac39-816bde8b779c\", projectId: \"06012c50-17f5-4b56-a88c-a74b0ffdfc71\", serviceId: \"f51723ed-ff72-451b-913e-905655829cdf\" }) }"}'
-          else
-            echo "RAILWAY_TOKEN secret is not set in GitHub repository settings."
+          if [ -z "$RAILWAY_TOKEN" ]; then
+            echo "Error: RAILWAY_TOKEN secret is not set in GitHub repository settings."
             exit 1
           fi
+          echo "Triggering Railway deployment for latest commit..."
+          RESP=$(curl -s -X POST https://backboard.railway.app/graphql/v2 \
+            -H "Authorization: Bearer $RAILWAY_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"query":"mutation { serviceInstanceDeploy(serviceId: \"f51723ed-ff72-451b-913e-905655829cdf\", environmentId: \"c7d99b85-b979-479f-ac39-816bde8b779c\", latestCommit: true) }"}')
+          echo "Railway response: $RESP"
+          if echo "$RESP" | grep -q "errors"; then
+            echo "Deployment trigger failed!"
+            exit 1
+          fi
+          echo "Successfully triggered Railway build for latest commit."
