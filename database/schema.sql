@@ -26,7 +26,7 @@ create table if not exists groups (
 create table if not exists characters (
   id             text primary key,                -- slug, e.g. 'reinhard'
   name           text not null,
-  series         text not null check (series in ('Re:ZERO', 'Black Clover', 'Death Note', 'Ben 10')),
+  series         text not null check (series in ('Re:ZERO', 'Black Clover', 'Death Note', 'Ben 10', 'Hunter x Hunter')),
   image_url      text,
   image_file_id  text,                            -- cached Telegram file_id
   attack         smallint not null check (attack between 1 and 100),
@@ -43,7 +43,7 @@ create table if not exists characters (
 -- Migration for databases created before a franchise was added: refresh the series check.
 alter table characters drop constraint if exists characters_series_check;
 alter table characters add constraint characters_series_check
-  check (series in ('Re:ZERO', 'Black Clover', 'Death Note', 'Ben 10'));
+  check (series in ('Re:ZERO', 'Black Clover', 'Death Note', 'Ben 10', 'Hunter x Hunter'));
 
 create table if not exists character_categories (
   character_id  text not null references characters(id) on delete cascade,
