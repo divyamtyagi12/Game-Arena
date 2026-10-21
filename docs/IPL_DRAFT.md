@@ -4,12 +4,21 @@ Third game of the arena. Anime Draft and Number Wars are untouched: no existing 
 (only additive hooks in `bot.py`, `handlers/arena|start|info|lobby|leaderboard.py`, `utils/messages.py`).
 
 ## Deploy
-1. Supabase SQL editor, in this order (all re-runnable): `database/schema.sql`, `database/number_wars.sql`, `database/ipl_draft.sql`,
-   `database/migration_ipl_v2.sql`, then **`database/migration_ipl_v3.sql`** (must be last).
+1. Supabase SQL editor, in this order (all re-runnable):
+   1. `database/schema.sql`
+   2. `database/number_wars.sql`
+   3. `database/ipl_draft.sql`
+   4. IPL migrations in numeric order: `migration_ipl_v2.sql`, `migration_ipl_v3.sql`, `migration_ipl_v4.sql`,
+      `migration_ipl_v5.sql`, `migration_ipl_v6.sql`, `migration_ipl_v7.sql`, `migration_ipl_v8_lockdown.sql`,
+      `migration_ipl_v9_offer_pool.sql` (**v9 must be last**).
+   5. Number Wars schema additions (if upgrading an existing Number Wars deployment):
+      `migration_nw_constraint.sql`, then `migration_nw_v2_hpcap.sql` — these extend `number_wars.sql`
+      and are safe to re-run after it.
+
    **Before upgrading an existing deployment run `database/backup_ipl_tables.sql`** (non-destructive: copies every IPL table into a new
-   `ipl_backup_<timestamp>` schema and verifies row counts) or `scripts/backup_ipl_tables.sh` (pg_dump). Nothing in v3 drops or deletes data;
-   removing an old backup schema is left to the owner.
-   Without the third file the bot still runs; IPL is disabled and an error is logged.
+   `ipl_backup_<timestamp>` schema and verifies row counts) or `scripts/backup_ipl_tables.sh` (pg_dump). Nothing in the migration files
+   drops or deletes data; removing an old backup schema is left to the owner.
+   Without `ipl_draft.sql` the bot still runs; IPL is disabled and an error is logged.
 2. Load players (see below) — `python -m scripts.import_ipl_players --seed` and/or `--cricsheet ipl_json.zip`.
 3. Start the bot as before. No new secrets: IPL uses the existing `SUPABASE_URL`/`SUPABASE_KEY` (service role) and bot token.
    IPL functions are `security definer`, granted to `service_role` only; IPL tables have RLS on with no policies; hidden ratings

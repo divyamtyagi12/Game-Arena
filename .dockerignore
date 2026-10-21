@@ -1,0 +1,9 @@
+# Secrets — never bake into the image; pass as env vars at runtime
+.env
+.env.*
+
+# Version control
+.git
+
+# Test suite — not needed at runtime
+tests/

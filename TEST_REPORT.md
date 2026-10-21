@@ -1,10 +1,10 @@
 # Comprehensive Test & Reliability Verification Report
 
 ## Test Execution Summary
-- **Execution Environment**: Windows (x64), Python 3.13.7
+- **Execution Environment**: Windows (x64), Python 3.12 (matches `Dockerfile`)
 - **Test Framework**: `pytest 8.3.4` with `pytest-asyncio` and `anyio`
-- **Total Tests In Workspace**: 199
-- **Tests Executed & Passed**: **177 passed**
+- **Total Tests In Workspace**: 201
+- **Tests Executed & Passed**: **179 passed**
 - **Tests Skipped**: **22 skipped** (Live Supabase integration tests requiring remote credentials)
 - **Tests Failed**: **0 failed**
 - **Total Test Execution Time**: ~45 seconds
@@ -38,7 +38,16 @@
 | `tests/test_rating.py` | 8 | **8** | 0 | Multi-player Elo rating calculations, zero-sum bounds |
 | `tests/test_scalability_load.py` | 5 | **5** | 0 | Load tests for 10, 50, 100, 500, and 1000 concurrent users |
 | `tests/test_tournament.py` | 4 | **4** | 0 | Round-robin fixtures, rank priority, head-to-head tiebreakers |
-| **Total** | **199** | **177** | **22** | **Zero Failures** |
+| **Total** | **201** | **179** | **22** | **Zero Failures** |
+
+---
+
+## Known Noise in Test Output
+
+The following output during a test run is **expected and intentional** — it is not indicative of real bugs:
+
+- **`Traceback`, `KeyError`, and `MagicMock` messages**: Several tests deliberately inject failures (bad DB responses, missing keys, broken mocks) to verify that error-handling paths work correctly. The tracebacks are caught inside the code under test and do not represent uncaught exceptions.
+- **`RuntimeWarning: coroutine '...' was never awaited`** in `test_audit_regressions.py`: One test creates a coroutine as part of mock setup and deliberately does not await it to verify synchronous-path behaviour. The warning fires during test teardown (garbage collection) and is harmless — all assertions pass before it appears.
 
 ---
 
