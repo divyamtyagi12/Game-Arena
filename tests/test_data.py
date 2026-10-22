@@ -8,7 +8,7 @@ from tests.helpers import build_catalog
 def test_unique_ids_and_series():
     ids = [c["id"] for c in CHARACTERS]
     assert len(ids) == len(set(ids))
-    assert {c["series"] for c in CHARACTERS} == {"Re:ZERO", "Black Clover", "Death Note", "Ben 10"}
+    assert {c["series"] for c in CHARACTERS} == {"Re:ZERO", "Black Clover", "Death Note", "Ben 10", "Hunter x Hunter", "One Punch Man"}
 
 
 def test_stat_ranges():

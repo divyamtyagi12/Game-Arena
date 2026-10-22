@@ -7,7 +7,7 @@ from game.categories import CATEGORY_KEYS
 
 RARITY_EMOJI = {"LEGENDARY": "🌟", "EPIC": "💎", "RARE": "🔷", "COMMON": "⚪"}
 SERIES_TAG = {"Re:ZERO": "Re:ZERO", "Black Clover": "Black Clover", "Death Note": "Death Note",
-              "Ben 10": "Ben 10"}
+              "Ben 10": "Ben 10", "Hunter x Hunter": "Hunter x Hunter", "One Punch Man": "One Punch Man"}
 
 
 @dataclass(eq=False)
