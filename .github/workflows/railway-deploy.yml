@@ -39,12 +39,24 @@ jobs:
 
       - name: Deploy to Railway
         env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
           RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
         run: |
-          if [ -z "$RAILWAY_API_TOKEN" ]; then
+          if [ -z "$RAILWAY_TOKEN" ] && [ -z "$RAILWAY_API_TOKEN" ]; then
             echo "Error: RAILWAY_TOKEN secret is not set in GitHub repository settings."
             exit 1
           fi
           echo "Deploying latest codebase to Railway..."
-          railway up --service f51723ed-ff72-451b-913e-905655829cdf --environment c7d99b85-b979-479f-ac39-816bde8b779c -p 06012c50-17f5-4b56-a88c-a74b0ffdfc71 --detach
-          echo "Successfully uploaded and initiated Railway deployment."
+          if ! railway up --service f51723ed-ff72-451b-913e-905655829cdf --environment c7d99b85-b979-479f-ac39-816bde8b779c -p 06012c50-17f5-4b56-a88c-a74b0ffdfc71 --detach; then
+            echo "Railway CLI 'railway up' failed. Attempting GraphQL serviceInstanceDeploy fallback..."
+            RESP=$(curl -s -X POST https://backboard.railway.app/graphql/v2 \
+              -H "Authorization: Bearer ${{ secrets.RAILWAY_TOKEN }}" \
+              -H "Content-Type: application/json" \
+              -d "{\"query\":\"mutation { serviceInstanceDeploy(serviceId: \\\"f51723ed-ff72-451b-913e-905655829cdf\\\", environmentId: \\\"c7d99b85-b979-479f-ac39-816bde8b779c\\\", commitSha: \\\"$GITHUB_SHA\\\", latestCommit: true) }\"}")
+            echo "Railway GraphQL response: $RESP"
+            if echo "$RESP" | grep -q "errors"; then
+              echo "Deployment trigger failed!"
+              exit 1
+            fi
+          fi
+          echo "Successfully initiated Railway deployment."
