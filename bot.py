@@ -103,6 +103,7 @@ def register_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("cancelgame", lobby.cancelgame_command))
     app.add_handler(CommandHandler("leaderboard", leaderboard.leaderboard_command))
     app.add_handler(CommandHandler("setimage", admin.setimage_command))
+    app.add_handler(CommandHandler("reload", admin.reload_command))
     for name, fn in (("ipl", ipl_commands.ipl_command), ("iplrules", ipl_commands.iplrules_command),
                      ("iplteam", ipl_commands.iplteam_command), ("ipltable", ipl_commands.ipltable_command),
                      ("iplfixtures", ipl_commands.iplfixtures_command), ("iplhistory", ipl_commands.iplhistory_command),
