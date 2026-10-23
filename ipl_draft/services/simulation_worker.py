@@ -174,6 +174,59 @@ async def _fixtures(rt: IplRuntime, t: dict) -> bool:
     return True
 
 
+def outcome_to_card(out: Any) -> dict:
+    """Build compact scorecard card dict directly from in-memory MatchOutcome without extra DB queries."""
+    innings_detail = []
+    for inn in out.innings:
+        batting = [
+            {
+                "name": getattr(l.player, "display_name", None) or getattr(l.player, "name", "Batter"),
+                "runs": l.runs,
+                "balls": l.balls,
+                "fours": l.fours,
+                "sixes": l.sixes,
+                "out": l.out,
+                "did_bat": l.did_bat,
+            }
+            for l in inn.bat_lines
+        ]
+        bowling = [
+            {
+                "name": getattr(b.player, "display_name", None) or getattr(b.player, "name", "Bowler"),
+                "legal_balls": b.balls,
+                "runs": b.runs,
+                "wickets": b.wickets,
+                "maidens": b.maidens,
+                "wides": b.wides,
+                "noballs": b.noballs,
+            }
+            for b in inn.bowl_lines
+        ]
+        innings_detail.append({
+            "innings_no": inn.innings_no,
+            "is_super_over": inn.is_super_over,
+            "batting_team": {"id": inn.batting.team_id, "name": inn.batting.name},
+            "runs": inn.runs,
+            "wickets": inn.wickets,
+            "legal_balls": inn.legal_balls,
+            "extras": inn.extras,
+            "fall_of_wickets": inn.fow,
+            "target": inn.target,
+            "all_out": inn.all_out,
+            "batting": batting,
+            "bowling": bowling,
+        })
+    return {
+        "team1": {"id": out.team1.team_id, "name": out.team1.name},
+        "team2": {"id": out.team2.team_id, "name": out.team2.name},
+        "winner_team_id": out.winner,
+        "result_type": out.result_type,
+        "margin": out.margin,
+        "summary": out.summary,
+        "innings_detail": innings_detail,
+    }
+
+
 async def _simulate(rt: IplRuntime, t: dict, fx: dict, squads: dict[int, Squad]) -> dict:
     tid = t["id"]
     teams_list = await rt.repo.all_teams(tid)
@@ -192,13 +245,20 @@ async def _simulate(rt: IplRuntime, t: dict, fx: dict, squads: dict[int, Squad])
         init_text = (f"🏏 <b>IPL DRAFT — {stage_label}</b>\n\n"
                      f"<b>{m.esc(h_name)}</b> vs <b>{m.esc(a_name)}</b>\n\n"
                      "🪙 <i>Toss underway &amp; players taking the field…</i>")
-        for h in humans:
+
+        async def _send_init(h: dict) -> tuple[int, int | None]:
             try:
                 sent = await notify.dm(rt, h["user_id"], init_text)
                 if sent:
-                    dm_msgs[h["user_id"]] = sent.message_id
+                    return h["user_id"], sent.message_id
             except Exception:  # noqa: BLE001
                 pass
+            return h["user_id"], None
+
+        results = await asyncio.gather(*[_send_init(h) for h in humans], return_exceptions=True)
+        for r in results:
+            if isinstance(r, tuple) and r[1]:
+                dm_msgs[r[0]] = r[1]
 
     # ── Strict validation: verify system teams before match simulation ──
     from ..engine.team_builder import validate_system_team_squad
@@ -228,42 +288,30 @@ async def _simulate(rt: IplRuntime, t: dict, fx: dict, squads: dict[int, Squad])
     rng, seed = match_rng(rt, tid, fx["id"], t.get("draft_started_at"))
     out = simulate_match(squads[fx["home"]], squads[fx["away"]], rng, seed=seed)
 
-    # Live simulated progress update in DM
-    if humans and dm_msgs:
-        try:
-            inn1 = out.innings[0]
-            progress_text = (f"🏏 <b>IPL DRAFT — {fx.get('stage', 'LEAGUE').upper()}</b>\n\n"
-                             f"<b>{m.esc(out.team1.name)}</b>: {inn1.runs}/{inn1.wickets} ({m.overs_str(inn1.legal_balls)} ov)\n"
-                             f"🎯 <b>{m.esc(out.team2.name)}</b> chasing {inn1.runs + 1}…")
-            for h in humans:
-                mid = dm_msgs.get(h["user_id"])
-                if mid:
-                    await notify.edit_dm(rt, h["user_id"], mid, progress_text)
-            await rt.pause(0.8)
-        except Exception:  # noqa: BLE001
-            pass
-
     res = await rt.repo.settle(fx["id"], to_payload(out, store_balls=rt.s.store_ball_events))
     if res.get("status") not in ("OK", "ALREADY"):
         raise RuntimeError(f"settle {fx['id']}: {res}")
 
+    card = outcome_to_card(out)
+    res["card"] = card
+
     # Deliver final compact scorecard automatically to each human user's DM — no buttons needed
-    if humans and res.get("match_id"):
-        try:
-            card = await rt.repo.scorecard(res["match_id"])
-            if card:
-                for h in humans:
-                    uid = h["user_id"]
-                    your_team_id = h["id"]
-                    mid = dm_msgs.get(uid)
-                    text = m.format_compact_scorecard(card, fx.get("stage", "LEAGUE"), your_team_id)
-                    if mid:
-                        if not await notify.edit_dm(rt, uid, mid, text):
-                            await notify.dm(rt, uid, text)
-                    else:
+    if humans:
+        async def _deliver_scorecard(h: dict) -> None:
+            try:
+                uid = h["user_id"]
+                your_team_id = h["id"]
+                mid = dm_msgs.get(uid)
+                text = m.format_compact_scorecard(card, fx.get("stage", "LEAGUE"), your_team_id)
+                if mid:
+                    if not await notify.edit_dm(rt, uid, mid, text):
                         await notify.dm(rt, uid, text)
-        except Exception:  # noqa: BLE001
-            log.exception("Failed to deliver compact scorecard DM for match %s", res.get("match_id"))
+                else:
+                    await notify.dm(rt, uid, text)
+            except Exception:  # noqa: BLE001
+                log.exception("Failed to deliver compact scorecard DM for match %s", res.get("match_id"))
+
+        await asyncio.gather(*[_deliver_scorecard(h) for h in humans], return_exceptions=True)
 
     return res
 
@@ -416,9 +464,11 @@ async def _playoff(rt: IplRuntime, t: dict) -> bool:
         log.error("Playoff fixture %s failed: %s", fx.get("id"), res)
         raise RuntimeError(f"Simulation failed for playoff fixture {fx.get('id')}: {res.get('status')} ({res.get('reason', '')})")
 
-    if res.get("status") == "OK" and res.get("match_id"):
+    if res.get("status") in ("OK", "ALREADY"):
         # Match result message pops into group one by one (Image 1 style)
-        card = await rt.repo.scorecard(res["match_id"])
+        card = res.get("card")
+        if not card and res.get("match_id"):
+            card = await rt.repo.scorecard(res["match_id"])
         if card:
             line = m.format_playoff_result_line(fx.get("stage", ""), card)
             await notify.group(rt, t["group_id"], line)
