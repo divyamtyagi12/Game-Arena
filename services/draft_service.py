@@ -76,7 +76,7 @@ async def ensure_offer(ctx: AppContext, gp_id: int, category: str, picked: set[s
     if not ids:
         chars = build_offers(ctx.catalog, category, picked, ctx.rng)
         ids = await ctx.drafts.create_offer(gp_id, category, [c.id for c in chars])
-    return [ctx.catalog.get(i) for i in ids]
+    return [c for i in ids if (c := ctx.catalog.get(i)) is not None]
 
 
 def offer_markup(gp_id: int, idx: int, chars: list[Character]) -> InlineKeyboardMarkup:
@@ -114,31 +114,44 @@ async def handle_pick(ctx: AppContext, query, gp_id: int, cat_idx: int, pos: int
     game = await ctx.games.get(gp["game_id"])
     if not game or game["status"] != "DRAFTING":
         return await answer("⚠️ This draft is no longer active.", True)
-    picks = await ctx.drafts.picks(gp_id)
-    if cat_idx != len(picks) or not 0 <= cat_idx < TEAM_SIZE:
-        return await answer("⚠️ You already chose for this category.")
-    cat = CATEGORY_KEYS[cat_idx]
-    ids = await ctx.drafts.get_offer(gp_id, cat)
-    if not ids or not 1 <= pos <= len(ids):
-        return await answer("⚠️ That button is outdated.", True)
-    char = ctx.catalog.get(ids[pos - 1])
-    try:
-        await ctx.drafts.add_pick(gp_id, cat, char.id)
-    except APIError as exc:
-        if is_unique_violation(exc):  # double-click / race: the other click already won
-            return await answer("⚠️ Already selected.")
-        raise
-    await answer(f"✅ {char.name} selected!")
-    if query.message:
+
+    async with ctx.lock(("pick", gp_id)):
+        picks = await ctx.drafts.picks(gp_id)
+        if cat_idx != len(picks) or not 0 <= cat_idx < TEAM_SIZE:
+            return await answer("⚠️ You already chose for this category.")
+        cat = CATEGORY_KEYS[cat_idx]
+        ids = await ctx.drafts.get_offer(gp_id, cat)
+        if not ids or not 1 <= pos <= len(ids):
+            return await answer("⚠️ That button is outdated.", True)
+        char = ctx.catalog.get(ids[pos - 1])
+        if not char:
+            return await answer("⚠️ That character was not found.", True)
+
+        # Server-side validation: character must be in the offered options
+        if char.id not in ids:
+            return await answer("⚠️ That character was not among your options.", True)
+
+        # Server-side validation: character must not have already been picked in previous categories
+        if any(p["character_id"] == char.id for p in picks):
+            return await answer("⚠️ That character was already selected in another category.", True)
+
         try:
-            await safe_edit(ctx, query.message.chat.id, query.message.message_id,
-                            msg.pick_locked_text(cat, char))
-        except Exception as exc:
-            log.warning("safe_edit pick locked text error: %s", exc)
-    if len(picks) + 1 >= TEAM_SIZE:
-        await finalize_player(ctx, gp_id)
-    else:
-        await send_prompt(ctx, gp)
+            await ctx.drafts.add_pick(gp_id, cat, char.id)
+        except APIError as exc:
+            if is_unique_violation(exc):  # double-click / race: the other click already won
+                return await answer("⚠️ Already selected.")
+            raise
+        await answer(f"✅ {char.name} selected!")
+        if query.message:
+            try:
+                await safe_edit(ctx, query.message.chat.id, query.message.message_id,
+                                msg.pick_locked_text(cat, char))
+            except Exception as exc:
+                log.warning("safe_edit pick locked text error: %s", exc)
+        if len(picks) + 1 >= TEAM_SIZE:
+            await finalize_player(ctx, gp_id)
+        else:
+            await send_prompt(ctx, gp)
 
 
 async def finalize_player(ctx: AppContext, gp_id: int) -> None:
@@ -192,19 +205,25 @@ async def resume_draft(ctx: AppContext, game_id: int) -> None:
 
 
 async def autopick_player(ctx: AppContext, gp: dict) -> None:
-    while True:
-        picks = await ctx.drafts.picks(gp["id"])
-        if len(picks) >= TEAM_SIZE:
-            break
-        cat = CATEGORY_KEYS[len(picks)]
-        chars = await ensure_offer(ctx, gp["id"], cat, {p["character_id"] for p in picks})
-        try:
-            await ctx.drafts.add_pick(gp["id"], cat, ctx.rng.choice(chars).id, auto=True)
-        except APIError as exc:
-            if not is_unique_violation(exc):
-                raise
-    await send_message(ctx, gp["user_id"], "⏱️ Draft time ran out — your remaining picks were chosen automatically.")
-    await finalize_player(ctx, gp["id"])
+    async with ctx.lock(("pick", gp["id"])):
+        while True:
+            picks = await ctx.drafts.picks(gp["id"])
+            if len(picks) >= TEAM_SIZE:
+                break
+            cat = CATEGORY_KEYS[len(picks)]
+            chars = await ensure_offer(ctx, gp["id"], cat, {p["character_id"] for p in picks})
+            if not chars:
+                break
+            picked_ids = {p["character_id"] for p in picks}
+            eligible = [c for c in chars if c.id not in picked_ids]
+            chosen_char = ctx.rng.choice(eligible) if eligible else ctx.rng.choice(chars)
+            try:
+                await ctx.drafts.add_pick(gp["id"], cat, chosen_char.id, auto=True)
+            except APIError as exc:
+                if not is_unique_violation(exc):
+                    raise
+        await send_message(ctx, gp["user_id"], "⏱️ Draft time ran out — your remaining picks were chosen automatically.")
+        await finalize_player(ctx, gp["id"])
 
 
 async def autopick_expired(ctx: AppContext) -> None:

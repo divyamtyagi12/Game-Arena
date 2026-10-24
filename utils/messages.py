@@ -76,7 +76,7 @@ def rules_text() -> str:
         "<b>Franchises:</b> Re:ZERO · Black Clover · Death Note · Ben 10 · Hunter x Hunter · One Punch Man\n\n"
         "<b>Draft</b> — in your DM you build a team of five, one per category: "
         "⚔️ Attack · 🏰 Tanking · ⚡ Speed · 💚 Healing · 🧠 Intelligence. "
-        "Each category offers 5 random eligible characters. A character can't fill two of your slots.\n\n"
+        "Each category offers 6 random eligible characters. A character can't fill two of your slots.\n\n"
         "<b>League</b> — everyone fights everyone once. Each match = 5 clashes "
         "(category vs same category). Ratings are fixed; a small ±5% luck factor only matters in close fights.\n"
         "Win (3+ clashes) = 3 pts · Loss = 0.\n"

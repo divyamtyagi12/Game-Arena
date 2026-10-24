@@ -30,4 +30,4 @@ CATEGORIES: tuple[CategoryInfo, ...] = (
 CATEGORY_KEYS: tuple[str, ...] = tuple(c.key for c in CATEGORIES)
 CATEGORY_BY_KEY: dict[str, CategoryInfo] = {c.key: c for c in CATEGORIES}
 TEAM_SIZE = len(CATEGORIES)
-OFFER_SIZE = 5
+OFFER_SIZE = 6

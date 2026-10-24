@@ -11,7 +11,7 @@ Python 3.12 · python-telegram-bot (async) · Supabase/PostgreSQL · long pollin
 
 ## Game flow
 1. `/start` in a group → pick **Anime Draft** → lobby (⚔️ JOIN / 🚪 LEAVE / 🔥 FORCE START). 3–8 players. Joining requires having pressed Start in the bot's DM.
-2. FORCE START (host/admin) → every player is DM-checked, the lobby locks, and each player drafts 5 characters (5 random offers per category). Progress (✅/⏳, never characters) is shown in the group.
+2. FORCE START (host/admin) → every player is DM-checked, the lobby locks, and each player drafts 5 characters (6 random offers per category). Progress (✅/⏳, never characters) is shown in the group.
 3. Round-robin league: each match = 5 clashes, fought privately with live-edited DM cards and a scorecard to both players. The group only gets the standings table (edited in place after each round).
 4. Top two → Grand Final (3+ clashes wins; no ties possible with 5 clashes). Champion announced in the group.
 
